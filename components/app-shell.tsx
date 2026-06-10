@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import {
   ChartColumnBig,
+  ChevronDown,
   Database,
   Info,
   Layers,
@@ -29,6 +30,8 @@ import { deleteClient, deleteProduct, loadData, processSale, resetLocalData, sav
 import { dataMode } from "@/lib/supabase";
 import { type AppData, type CartItem, type Client, type Product } from "@/lib/types";
 import { cn, computeClientHistory, formatDate, formatMad, isToday } from "@/lib/utils";
+import { SalesChart } from "@/components/sales-chart";
+import { InvoiceReceipt } from "@/components/invoice-receipt";
 
 type ViewKey = "dashboard" | "produits" | "clients" | "categories" | "pos" | "ventes" | "settings";
 
@@ -66,6 +69,8 @@ const emptyProduct: Product = {
   stock: 0,
   image_url: "",
   categorie: "DERMOCOSMÉTIQUE",
+  date_expiration: null,
+  code_barre: null,
 };
 
 const emptyClient: Client = {
@@ -83,6 +88,7 @@ export function AppShell() {
   const [view, setView] = useState<ViewKey>("dashboard");
   const [data, setData] = useState<AppData | null>(null);
   const [query, setQuery] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState("Toutes");
   const [clientSearch, setClientSearch] = useState("");
   const [selectedClientId, setSelectedClientId] = useState("");
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -92,6 +98,14 @@ export function AppShell() {
   const [editingClientId, setEditingClientId] = useState<string | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [newCategoryName, setNewCategoryName] = useState("");
+  const [categoryAddQuery, setCategoryAddQuery] = useState("");
+  const [categoryAddOpen, setCategoryAddOpen] = useState(false);
+  const [showInvoice, setShowInvoice] = useState(false);
+  const [barcodeQuery, setBarcodeQuery] = useState("");
+  const [seeding, setSeeding] = useState(false);
+  const [seedStatus, setSeedStatus] = useState<{ ok: boolean; msg: string } | null>(null);
+  const [savingProduct, setSavingProduct] = useState(false);
+  const [saveFeedback, setSaveFeedback] = useState<string | null>(null);
 
   useEffect(() => {
     const session = window.sessionStorage.getItem(SESSION_KEY);
@@ -104,12 +118,25 @@ export function AppShell() {
   const filteredProducts = useMemo(() => {
     if (!data) return [];
     const value = query.toLowerCase();
+    return data.produits.filter((product) => {
+      const matchesSearch =
+        product.nom.toLowerCase().includes(value) ||
+        product.categorie.toLowerCase().includes(value);
+      const matchesCategory = categoryFilter === "Toutes" || product.categorie === categoryFilter;
+      return matchesSearch && matchesCategory;
+    });
+  }, [data, query, categoryFilter]);
+
+  const posProducts = useMemo(() => {
+    if (!data) return [];
+    const value = barcodeQuery.trim().toLowerCase();
+    if (!value) return data.produits;
     return data.produits.filter(
       (product) =>
-        product.nom.toLowerCase().includes(value) ||
-        product.categorie.toLowerCase().includes(value),
+        product.code_barre?.toLowerCase().includes(value) ||
+        product.nom.toLowerCase().includes(value),
     );
-  }, [data, query]);
+  }, [data, barcodeQuery]);
 
   const filteredClients = useMemo(() => {
     if (!data) return [];
@@ -179,6 +206,26 @@ export function AppShell() {
     setIsLoggedIn(false);
   }
 
+  async function handleSeedSupabase() {
+    setSeeding(true);
+    setSeedStatus(null);
+    try {
+      const res = await fetch("/api/seed", { method: "POST" });
+      const json = await res.json();
+      if (json.success) {
+        setSeedStatus({ ok: true, msg: `✓ ${json.categories} catégories, ${json.produits} produits, ${json.clients} clients, ${json.ventes} ventes importés` });
+        const fresh = await loadData();
+        setData(fresh);
+      } else {
+        setSeedStatus({ ok: false, msg: json.error || "Erreur lors du seed" });
+      }
+    } catch {
+      setSeedStatus({ ok: false, msg: "Erreur réseau — vérifie que le serveur est lancé" });
+    } finally {
+      setSeeding(false);
+    }
+  }
+
   async function handleReset() {
     const next = await resetLocalData();
     setData(next);
@@ -187,12 +234,22 @@ export function AppShell() {
   }
 
   async function handleSaveProduct() {
-    if (!data || !productForm.nom.trim() || !productForm.prix) return;
-    const product = { ...productForm, id: productForm.id || crypto.randomUUID() };
-    const next = await saveProduct(product, data);
-    setData(next);
-    setProductForm(emptyProduct);
-    setEditingProductId(null);
+    if (!data || !productForm.nom.trim() || productForm.prix <= 0) return;
+    setSavingProduct(true);
+    setSaveFeedback(null);
+    try {
+      const product = { ...productForm, id: productForm.id || crypto.randomUUID() };
+      const next = await saveProduct(product, data);
+      setData(next);
+      setProductForm(emptyProduct);
+      setEditingProductId(null);
+      setSaveFeedback("✓ Produit enregistré");
+    } catch {
+      setSaveFeedback("✗ Erreur lors de l'enregistrement");
+    } finally {
+      setSavingProduct(false);
+      setTimeout(() => setSaveFeedback(null), 3000);
+    }
   }
 
   function handleEditProduct(product: Product) {
@@ -259,6 +316,11 @@ export function AppShell() {
     if (!data || !cart.length) return;
     const next = await processSale(cart, data, selectedClientId || null);
     setData(next);
+    setShowInvoice(true);
+  }
+
+  function closeInvoice() {
+    setShowInvoice(false);
     setCart([]);
     setSelectedClientId("");
     setView("ventes");
@@ -362,11 +424,11 @@ export function AppShell() {
   const selectedClient = data.clients.find((client) => client.id === selectedClientId);
 
   return (
-    <div className="min-h-screen p-4 md:p-6">
-      <div className="mx-auto grid max-w-[1600px] gap-4 lg:grid-cols-[300px_1fr]">
+    <div className="flex h-screen overflow-hidden">
+      <div className="mx-auto flex w-full max-w-[1600px] gap-4 px-4 md:px-6">
         <aside
-          className="rounded-[34px] p-6 text-white shadow-[0_24px_70px_rgba(15,61,64,0.28)]"
-          style={{ background: "linear-gradient(180deg, #113c3f 0%, #19585b 44%, #246f72 100%)" }}
+          className="flex w-[300px] shrink-0 flex-col rounded-[34px] p-6 text-white shadow-[0_24px_70px_rgba(15,61,64,0.28)]"
+          style={{ background: "linear-gradient(180deg, #113c3f 0%, #19585b 44%, #246f72 100%)", height: "calc(100vh - 3rem)", marginTop: "1.5rem", marginBottom: "1.5rem" }}
         >
           <div className="flex items-center gap-3">
             <Image src="/assets/logo/white_logo.jpeg" alt="Logo Dani's Parapharmacy" width={60} height={60} className="h-15 w-15 rounded-2xl object-cover" />
@@ -381,7 +443,7 @@ export function AppShell() {
             <p className="text-sm text-white/65">{DEMO_ADMIN.role}</p>
           </div>
 
-          <nav className="mt-6 space-y-3">
+          <nav className="mt-6 flex-1 space-y-3">
             {navItems.map((item) => {
               const Icon = item.icon;
               return (
@@ -403,38 +465,17 @@ export function AppShell() {
             })}
           </nav>
 
-          <div className="mt-6 rounded-[28px] border border-white/10 bg-white/8 p-4">
-            <p className="text-xs uppercase tracking-[0.24em] text-white/65">Mode actif</p>
-            <p className="mt-2 text-lg font-semibold">
-              {dataMode === "cloud" ? "Cloud Supabase" : "Local hors ligne"}
-            </p>
-            <p className="mt-2 text-sm text-white/70">
-              Même interface, bascule uniquement via l&apos;environnement.
-            </p>
-          </div>
-
-          <div className="mt-4 grid gap-3">
-            <button
-              type="button"
-              onClick={handleReset}
-              disabled={dataMode === "cloud"}
-              className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-2xl border border-white/20 px-4 py-3 text-sm font-medium text-white transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-45"
-            >
-              <RotateCcw className="h-4 w-4" />
-              Réinitialiser les seeds
-            </button>
-            <button
-              type="button"
-              onClick={handleLogout}
-              className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-2xl bg-white text-sm font-semibold text-[var(--primary-deep)] transition hover:bg-[#f9fbfa]"
-            >
-              <LogOut className="h-4 w-4" />
-              Déconnexion
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={handleLogout}
+            className="mt-4 flex w-full cursor-pointer items-center justify-center gap-2 rounded-2xl bg-white/10 px-4 py-3 text-sm font-semibold text-white transition hover:bg-white/20"
+          >
+            <LogOut className="h-4 w-4" />
+            Déconnexion
+          </button>
         </aside>
 
-        <main className="space-y-4">
+        <main className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto py-6" style={{ scrollbarGutter: "stable" }}>
           <header className="glass-card rounded-[34px] p-6">
             <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
               <div>
@@ -484,81 +525,145 @@ export function AppShell() {
           </header>
 
           {view === "dashboard" && (
-            <section className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
-              <div className="space-y-4">
-                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-                  <StatCard title="Produits" value={dashboardStats.totalProducts.toString()} subtitle="Références actives" />
-                  <StatCard title="Stock total" value={dashboardStats.totalStock.toString()} subtitle="Unités en rayon" />
-                  <StatCard title="Ventes du jour" value={formatMad(dashboardStats.dailySales)} subtitle="Chiffre d'affaires" />
-                  <StatCard title="Alertes stock" value={dashboardStats.lowStock.length.toString()} subtitle="Articles à surveiller" />
-                </div>
-
-                <div className="glass-card rounded-[30px] p-6">
-                  <div className="flex items-center justify-between">
+            <section className="space-y-4">
+              <div className="overflow-hidden rounded-[30px] text-white" style={{ background: "linear-gradient(135deg, #1a5c5f 0%, #2d878b 50%, #3a9fa3 100%)" }}>
+                <div className="relative px-6 py-5">
+                  <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_30%,rgba(255,255,255,0.12),transparent_40%),radial-gradient(circle_at_80%_70%,rgba(255,255,255,0.08),transparent_30%)]" />
+                  <div className="relative flex items-center justify-between">
                     <div>
-                      <h2 className="section-title text-xl font-semibold">Top produits</h2>
-                      <p className="mt-1 text-sm text-[var(--muted)]">
-                        Les meilleures rotations visibles en un coup d&apos;oeil.
+                      <p className="text-sm font-medium uppercase tracking-[0.25em] text-white/75">
+                        {new Date().getHours() < 12 ? "Bonjour" : new Date().getHours() < 18 ? "Bon après-midi" : "Bonsoir"}
+                      </p>
+                      <h2 className="mt-1 text-2xl font-semibold">Tableau de bord</h2>
+                      <p className="mt-1 text-sm text-white/70">
+                        {new Date().toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}
                       </p>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => setView("ventes")}
-                      className="cursor-pointer rounded-2xl border border-[var(--border)] bg-white px-4 py-2 text-sm font-semibold text-[var(--primary)]"
-                    >
-                      Voir ventes
-                    </button>
-                  </div>
-                  <div className="mt-5 grid gap-4 md:grid-cols-2">
-                    {dashboardStats.topProducts.map((item) => (
-                      <div key={item.produit?.id} className="rounded-[26px] border border-[var(--border)] bg-white/75 p-4">
-                        <div className="flex items-center gap-4">
-                          <Image
-                            src={item.produit?.image_url ?? "/products/creme-hydratante.jpeg"}
-                            alt={item.produit?.nom ?? ""}
-                            width={64}
-                            height={64}
-                            className="h-16 w-16 rounded-2xl border border-[var(--border)] bg-white object-contain p-2"
-                          />
-                          <div>
-                            <p className="font-semibold text-[var(--primary-deep)]">{item.produit?.nom}</p>
-                            <p className="text-sm text-[var(--muted)]">{item.produit?.categorie}</p>
-                            <p className="mt-1 text-sm font-medium text-[var(--success)]">
-                              {item.quantity} unités vendues
-                            </p>
-                          </div>
-                        </div>
+                    <div className="hidden items-center gap-4 sm:flex">
+                      <div className="rounded-2xl bg-white/15 px-4 py-3 text-center backdrop-blur-sm">
+                        <p className="text-2xl font-bold">{dashboardStats.totalProducts}</p>
+                        <p className="text-[11px] uppercase tracking-[0.15em] text-white/70">Produits</p>
                       </div>
-                    ))}
+                      <div className="rounded-2xl bg-white/15 px-4 py-3 text-center backdrop-blur-sm">
+                        <p className="text-2xl font-bold">{dashboardStats.lowStock.length}</p>
+                        <p className="text-[11px] uppercase tracking-[0.15em] text-white/70">Alertes</p>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
 
-              <div className="space-y-4">
-                <div className="glass-card rounded-[30px] p-6">
-                  <h2 className="section-title text-xl font-semibold">Alerte stock faible</h2>
-                  <div className="mt-4 space-y-3">
-                    {dashboardStats.lowStock.map((product) => (
-                      <div key={product.id} className="flex items-center justify-between rounded-2xl border border-[var(--border)] bg-white/72 px-4 py-3">
-                        <div>
-                          <p className="font-medium text-[var(--primary-deep)]">{product.nom}</p>
-                          <p className="text-sm text-[var(--muted)]">{product.categorie}</p>
+              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                <StatCard title="Produits" value={dashboardStats.totalProducts.toString()} subtitle="Références actives" />
+                <StatCard title="Stock total" value={dashboardStats.totalStock.toString()} subtitle="Unités en rayon" />
+                <StatCard title="Ventes du jour" value={formatMad(dashboardStats.dailySales)} subtitle="Chiffre d'affaires" />
+                <StatCard title="Alertes stock" value={dashboardStats.lowStock.length.toString()} subtitle="Articles à surveiller" />
+              </div>
+
+              <div className="rounded-[30px] bg-white p-6 shadow-sm transition-all hover:shadow-md">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#edf5f5]">
+                      <Package className="h-5 w-5 text-[var(--primary)]" />
+                    </div>
+                    <div>
+                      <h2 className="section-title text-xl font-semibold">Top produits</h2>
+                      <p className="mt-0.5 text-sm text-[var(--muted)]">
+                        Les meilleures rotations
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setView("ventes")}
+                    className="cursor-pointer rounded-2xl border border-[var(--border)] bg-white px-4 py-2 text-sm font-semibold text-[var(--primary)] transition-all hover:bg-[var(--accent)]"
+                  >
+                    Voir ventes
+                  </button>
+                </div>
+                <div className="mt-5 grid gap-4 md:grid-cols-2">
+                  {dashboardStats.topProducts.map((item, idx) => (
+                    <div key={item.produit?.id} className="group flex items-center gap-4 rounded-[26px] border border-[var(--border)] bg-white/75 p-4 transition-all hover:-translate-y-0.5 hover:border-[var(--primary)]/20 hover:shadow-md">
+                      <div className="relative">
+                        <img
+                          src={item.produit?.image_url ?? "/products/creme-hydratante.jpeg"}
+                          alt={item.produit?.nom ?? ""}
+                          width={64}
+                          height={64}
+                          className="h-16 w-16 rounded-2xl border border-[var(--border)] bg-white object-contain p-2 transition-all group-hover:scale-105"
+                        />
+                        <div className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-[var(--primary)] text-[10px] font-bold text-white shadow-sm">
+                          {idx + 1}
                         </div>
-                        <span className="rounded-full bg-[#fff0ef] px-3 py-1 text-sm font-semibold text-[var(--danger)]">
-                          {product.stock} en stock
-                        </span>
                       </div>
-                    ))}
+                      <div className="min-w-0 flex-1">
+                        <p className="font-semibold text-[var(--primary-deep)]">{item.produit?.nom}</p>
+                        <p className="text-sm text-[var(--muted)]">{item.produit?.categorie}</p>
+                        <div className="mt-2 flex items-center gap-2">
+                          <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-[#edf5f5]">
+                            <div
+                              className="h-full rounded-full bg-[var(--primary)] transition-all"
+                              style={{ width: `${Math.min(100, (item.quantity / 5) * 100)}%` }}
+                            />
+                          </div>
+                          <span className="shrink-0 text-xs font-semibold text-[var(--primary)]">{item.quantity}</span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="rounded-[30px] bg-white p-6 shadow-sm transition-all hover:shadow-md">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#edf5f5]">
+                    <WalletCards className="h-5 w-5 text-[var(--primary)]" />
+                  </div>
+                  <div>
+                    <h2 className="section-title text-xl font-semibold">Tendance des ventes</h2>
+                    <p className="mt-0.5 text-sm text-[var(--muted)]">Évolution mensuelle du chiffre d&apos;affaires.</p>
                   </div>
                 </div>
+                <div className="mt-4">
+                  <SalesChart ventes={data.ventes} produits={data.produits} />
+                </div>
+              </div>
 
-                <div className="glass-card rounded-[30px] p-6">
-                  <h2 className="section-title text-xl font-semibold">Actions rapides</h2>
-                  <div className="mt-4 grid gap-3">
-                    <MiniAction title="Ouvrir le POS" description="Encaisser une vente maintenant" onClick={() => setView("pos")} />
-                    <MiniAction title="Consulter les clients" description="Recherche par téléphone et historique" onClick={() => setView("clients")} />
-                    <MiniAction title="Gérer le catalogue" description="Produits, stock et ajout rapide" onClick={() => setView("produits")} />
+              <div className="rounded-[30px] bg-white p-6 shadow-sm transition-all hover:shadow-md">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#fff0ef]">
+                      <ChartColumnBig className="h-5 w-5 text-[var(--danger)]" />
+                    </div>
+                    <div>
+                      <h2 className="section-title text-xl font-semibold">Alerte stock faible</h2>
+                      <p className="mt-0.5 text-sm text-[var(--muted)]">
+                        {dashboardStats.lowStock.length} produit{dashboardStats.lowStock.length > 1 ? "s" : ""} sous le seuil
+                      </p>
+                    </div>
                   </div>
+                </div>
+                <div className="mt-5 grid gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
+                  {dashboardStats.lowStock.map((product) => (
+                    <div key={product.id} className="group flex items-center justify-between rounded-2xl border border-[var(--border)] bg-white/72 px-4 py-3 transition-all hover:-translate-y-0.5 hover:border-[var(--danger)]/30 hover:shadow-md">
+                      <div className="flex items-center gap-3">
+                        <div className={cn(
+                          "h-2 w-2 rounded-full",
+                          product.stock <= 5 ? "bg-[var(--danger)]" : "bg-[#b8860b]",
+                        )} />
+                        <div>
+                          <p className="font-medium text-[var(--primary-deep)]">{product.nom}</p>
+                          <p className="text-xs text-[var(--muted)]">{product.categorie}</p>
+                        </div>
+                      </div>
+                      <span className={cn(
+                        "rounded-full px-3 py-1 text-xs font-semibold",
+                        product.stock <= 5 ? "bg-[#fff0ef] text-[var(--danger)]" : "bg-[#fff8e5] text-[#b8860b]",
+                      )}>
+                        {product.stock} en stock
+                      </span>
+                    </div>
+                  ))}
                 </div>
               </div>
             </section>
@@ -566,29 +671,61 @@ export function AppShell() {
 
           {view === "produits" && (
             <section className="grid gap-4 xl:grid-cols-[1.35fr_0.85fr]">
-              <div className="glass-card rounded-[30px] p-6">
-                <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                  <div>
-                    <h2 className="section-title text-xl font-semibold">Tous les produits</h2>
-                    <p className="mt-1 text-sm text-[var(--muted)]">
-                      {filteredProducts.length} produit{filteredProducts.length !== 1 ? "s" : ""} — cliquez sur un produit pour l&apos;ajouter au panier
-                    </p>
+              <div className="rounded-[30px] bg-white p-6 shadow-sm">
+                <div className="flex flex-wrap items-end justify-between gap-4">
+                  <div className="flex items-center gap-5">
+                    <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-[var(--accent)] to-[var(--primary)] text-white shadow-lg shadow-[var(--primary)]/20">
+                      <Package className="h-7 w-7" />
+                    </div>
+                    <div>
+                      <h2 className="text-2xl font-bold tracking-tight text-[var(--primary-deep)]">Tous les produits</h2>
+                      <div className="mt-1 flex items-center gap-2">
+                        <span className="inline-flex items-center gap-1.5 rounded-full bg-[var(--accent)] px-3 py-0.5 text-sm font-semibold text-[var(--primary)]">
+                          {filteredProducts.length} produit{filteredProducts.length !== 1 ? "s" : ""}
+                        </span>
+                        <span className="text-sm text-[var(--muted)]">— cliquez sur un produit pour l&apos;ajouter au panier</span>
+                      </div>
+                    </div>
                   </div>
-                  <label className="flex items-center gap-2 rounded-2xl border border-[var(--border)] bg-white px-4 py-3 transition focus-within:border-[var(--primary)]">
-                    <Search className="h-4 w-4 shrink-0 text-[var(--muted)]" />
-                    <input
-                      value={query}
-                      onChange={(e) => setQuery(e.target.value)}
-                      placeholder="Rechercher produit ou catégorie"
-                      className="w-48 border-0 bg-transparent outline-none md:w-64"
-                    />
-                  </label>
+                  <div className="flex items-center gap-3">
+                    <div className="group relative">
+                      <select
+                        value={categoryFilter}
+                        onChange={(e) => setCategoryFilter(e.target.value)}
+                        className="appearance-none cursor-pointer rounded-2xl border border-[var(--border)] bg-white/80 pl-4 pr-10 py-3.5 text-sm font-medium text-[var(--primary-deep)] outline-none transition-all focus:border-[var(--primary)] focus:bg-white focus:shadow-[0_0_0_4px_var(--accent)] hover:border-[var(--primary)]/40"
+                      >
+                        <option value="Toutes">Toutes les catégories</option>
+                        {data?.categories.map((cat) => (
+                          <option key={cat} value={cat}>{cat}</option>
+                        ))}
+                      </select>
+                      <Layers className="pointer-events-none absolute right-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--muted)] transition-colors group-hover:text-[var(--primary)]" />
+                    </div>
+                    <div className="relative">
+                      <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--muted)]" />
+                      <input
+                        value={query}
+                        onChange={(e) => setQuery(e.target.value)}
+                        placeholder="Rechercher..."
+                        className="w-48 rounded-2xl border border-[var(--border)] bg-white/80 py-3.5 pl-11 pr-4 text-sm text-[var(--primary-deep)] outline-none transition-all placeholder:text-[var(--muted)] focus:w-72 focus:border-[var(--primary)] focus:bg-white focus:shadow-[0_0_0_4px_var(--accent)] md:w-56"
+                      />
+                      {query && (
+                        <button
+                          type="button"
+                          onClick={() => setQuery("")}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 cursor-pointer rounded-full p-0.5 text-[var(--muted)] transition-colors hover:text-[var(--danger)]"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
                 </div>
                 <div className="mt-5 grid gap-5 md:grid-cols-2 2xl:grid-cols-3">
                   {filteredProducts.map((product) => (
                     <article key={product.id} className="group rounded-[28px] border border-[var(--border)] bg-white/75 transition hover:shadow-lg">
                       <div className="relative overflow-hidden rounded-t-[28px] bg-[linear-gradient(180deg,#f8fbfa_0%,#f0f6f3_100%)]">
-                        <Image src={product.image_url} alt={product.nom} width={440} height={280} className="h-48 w-full object-contain p-6 transition duration-300 group-hover:scale-105" />
+                        <img src={product.image_url} alt={product.nom} width={440} height={280} className="h-48 w-full object-contain p-6 transition duration-300 group-hover:scale-105" />
                         <span className="absolute left-3 top-3 rounded-full bg-white/90 px-3 py-1 text-xs font-semibold text-[var(--primary-deep)] shadow-sm backdrop-blur-sm">
                           {product.categorie}
                         </span>
@@ -626,8 +763,16 @@ export function AppShell() {
                                 ? "bg-[#fff8e5] text-[#b8860b]"
                                 : "bg-[#edf5f5] text-[var(--primary)]",
                           )}>
-                            {product.stock <= 5 ? "Stock critique" : product.stock <= 15 ? "Stock moyen" : "En stock"}: {product.stock}
+                              {product.stock <= 5 ? "Stock critique" : product.stock <= 15 ? "Stock moyen" : "En stock"}: {product.stock}
                           </span>
+                          {product.date_expiration && new Date(product.date_expiration) <= new Date(Date.now() + 90 * 24 * 60 * 60 * 1000) && (
+                            <span className={cn(
+                              "rounded-full px-3 py-1 text-xs font-semibold",
+                              new Date(product.date_expiration) < new Date() ? "bg-[#fff0ef] text-[var(--danger)]" : "bg-[#fff8e5] text-[#b8860b]",
+                            )}>
+                              {new Date(product.date_expiration) < new Date() ? "Périmé" : `Exp. ${new Date(product.date_expiration).toLocaleDateString("fr-FR")}`}
+                            </span>
+                          )}
                           <button
                             type="button"
                             onClick={() => addToCart(product)}
@@ -650,17 +795,21 @@ export function AppShell() {
 
               <div className="space-y-4">
                 <div className="glass-card rounded-[30px] p-6">
-                  <div className="flex items-center justify-between">
-                    <h2 className="section-title text-xl font-semibold">
+                  <div
+                    className="-mx-6 -mt-6 mb-6 flex items-center justify-between rounded-t-[30px] px-6 py-4 text-white"
+                    style={{ backgroundColor: "#246f72" }}
+                  >
+                    <h2 className="text-lg font-bold">
                       {editingProductId ? "Modifier le produit" : "Nouveau produit"}
                     </h2>
                     {editingProductId ? (
                       <button
                         type="button"
                         onClick={() => { setProductForm(emptyProduct); setEditingProductId(null); }}
-                        className="cursor-pointer rounded-2xl border border-[var(--border)] bg-white px-3 py-2 text-sm text-[var(--muted)] transition hover:bg-[#f5f5f5]"
+                        className="flex cursor-pointer items-center gap-1.5 rounded-xl bg-white/20 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-white/30"
                       >
-                        <X className="h-4 w-4" />
+                        <X className="h-3.5 w-3.5" />
+                        Annuler
                       </button>
                     ) : null}
                   </div>
@@ -671,6 +820,27 @@ export function AppShell() {
                     <div className="grid grid-cols-2 gap-3">
                       <Input label="Nom" value={productForm.nom} onChange={(value) => setProductForm((current) => ({ ...current, nom: value }))} />
                       <Input label="Prix (MAD)" type="number" value={String(productForm.prix)} onChange={(value) => setProductForm((current) => ({ ...current, prix: Number(value) }))} />
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <label className="block text-sm font-medium text-[var(--primary-deep)]">
+                        Code-barres
+                        <input
+                          type="text"
+                          value={productForm.code_barre ?? ""}
+                          onChange={(e) => setProductForm((current) => ({ ...current, code_barre: e.target.value || null }))}
+                          placeholder="Ex: 3598765432105"
+                          className="mt-2 w-full rounded-2xl border border-[var(--border)] bg-white px-4 py-3 outline-none transition focus:border-[var(--primary)]"
+                        />
+                      </label>
+                      <label className="block text-sm font-medium text-[var(--primary-deep)]">
+                        Date d&apos;expiration
+                        <input
+                          type="date"
+                          value={productForm.date_expiration ?? ""}
+                          onChange={(e) => setProductForm((current) => ({ ...current, date_expiration: e.target.value || null }))}
+                          className="mt-2 w-full rounded-2xl border border-[var(--border)] bg-white px-4 py-3 outline-none transition focus:border-[var(--primary)]"
+                        />
+                      </label>
                     </div>
                     <label className="block text-sm font-medium text-[var(--primary-deep)]">
                       Description
@@ -735,19 +905,37 @@ export function AppShell() {
                         />
                       </div>
                     </label>
+                    {saveFeedback && (
+                      <div className={cn(
+                        "rounded-2xl px-4 py-3 text-center text-sm font-semibold",
+                        saveFeedback.startsWith("✓") ? "bg-[#e8f5e9] text-[#2e7d32]" : "bg-[#ffebee] text-[#c62828]",
+                      )}>
+                        {saveFeedback}
+                      </div>
+                    )}
                     <button
                       type="button"
                       onClick={handleSaveProduct}
-                      className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-2xl bg-[var(--primary)] px-4 py-3 font-semibold text-white transition hover:bg-[var(--primary-deep)]"
+                      disabled={savingProduct}
+                      className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-2xl bg-[var(--primary)] px-4 py-3 font-semibold text-white transition hover:bg-[var(--primary-deep)] disabled:cursor-not-allowed disabled:opacity-60"
                     >
-                      <Plus className="h-4 w-4" />
-                      {editingProductId ? "Mettre à jour" : "Ajouter au catalogue"}
+                      {savingProduct ? (
+                        <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                      ) : (
+                        <Plus className="h-4 w-4" />
+                      )}
+                      {savingProduct ? "Enregistrement..." : editingProductId ? "Mettre à jour" : "Ajouter au catalogue"}
                     </button>
                   </div>
                 </div>
 
                 <div className="glass-card rounded-[30px] p-6">
-                  <h2 className="section-title text-lg font-semibold">Aperçu rapide</h2>
+                  <div
+                    className="-mx-6 -mt-6 mb-6 rounded-t-[30px] px-6 py-4 text-white"
+                    style={{ backgroundColor: "#246f72" }}
+                  >
+                    <h2 className="text-lg font-bold">Aperçu rapide</h2>
+                  </div>
                   <div className="mt-4 space-y-3">
                     <div className="flex items-center justify-between rounded-2xl bg-[#edf5f5] px-4 py-3">
                       <span className="text-sm text-[var(--primary-deep)]">Total produits</span>
@@ -769,123 +957,164 @@ export function AppShell() {
 
           {view === "categories" && (
             <section className="space-y-4">
-              <div className="glass-card rounded-[30px] p-6">
-                <div className="flex items-center justify-between gap-4">
-                  <div>
-                    <h2 className="section-title text-xl font-semibold">Gérer les catégories</h2>
-                    <p className="mt-1 text-sm text-[var(--muted)]">
-                      {data.categories.length} catégorie{data.categories.length !== 1 ? "s" : ""} — cliquez pour voir les produits
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <input
-                      value={newCategoryName}
-                      onChange={(e) => setNewCategoryName(e.target.value)}
-                      onKeyDown={async (e) => {
-                        if (e.key === "Enter" && newCategoryName.trim()) {
+
+              <div className="overflow-hidden rounded-[30px] text-white" style={{ background: "linear-gradient(135deg, #1a5c5f 0%, #2d878b 50%, #3a9fa3 100%)" }}>
+                <div className="relative px-6 py-5">
+                  <div className="absolute inset-0 bg-[radial-gradient(circle_at_80%_20%,rgba(254,238,177,0.18),transparent_30%),radial-gradient(circle_at_20%_80%,rgba(255,255,255,0.08),transparent_25%)]" />
+                  <div className="relative flex items-center justify-between">
+                    <div className="flex items-center gap-4">
+                      <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-white/20 backdrop-blur-sm">
+                        <Layers className="h-7 w-7" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-medium uppercase tracking-[0.25em] text-white/75">Catalogue</p>
+                        <h2 className="mt-1 text-2xl font-bold">Catégories</h2>
+                        <p className="mt-1 text-sm text-white/70">
+                          {data.categories.length} catégorie{data.categories.length !== 1 ? "s" : ""} · {data.produits.length} produits
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input
+                        value={newCategoryName}
+                        onChange={(e) => setNewCategoryName(e.target.value.toUpperCase())}
+                        onKeyDown={async (e) => {
+                          if (e.key === "Enter" && newCategoryName.trim()) {
+                            const next = await saveCategory(newCategoryName, data);
+                            setData(next);
+                            setNewCategoryName("");
+                          }
+                        }}
+                        placeholder="Nouvelle catégorie..."
+                        className="w-40 rounded-2xl bg-white/15 px-4 py-2.5 text-sm text-white outline-none placeholder:text-white/50 backdrop-blur-sm transition focus:w-52 focus:bg-white/25"
+                      />
+                      <button
+                        type="button"
+                        disabled={!newCategoryName.trim()}
+                        onClick={async () => {
+                          if (!newCategoryName.trim()) return;
                           const next = await saveCategory(newCategoryName, data);
                           setData(next);
                           setNewCategoryName("");
-                        }
-                      }}
-                      placeholder="Nouvelle catégorie"
-                      className="w-44 rounded-2xl border border-[var(--border)] bg-white px-4 py-3 text-sm outline-none transition focus:border-[var(--primary)]"
-                    />
-                    <button
-                      type="button"
-                      disabled={!newCategoryName.trim()}
-                      onClick={async () => {
-                        if (!newCategoryName.trim()) return;
-                        const next = await saveCategory(newCategoryName, data);
-                        setData(next);
-                        setNewCategoryName("");
-                      }}
-                      className="cursor-pointer rounded-2xl bg-[var(--primary)] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[var(--primary-deep)] disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      <Plus className="h-4 w-4" />
-                    </button>
+                        }}
+                        className="flex cursor-pointer items-center gap-1.5 rounded-2xl bg-white/20 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-white/30 disabled:cursor-not-allowed disabled:opacity-40 backdrop-blur-sm"
+                      >
+                        <Plus className="h-4 w-4" />
+                        Ajouter
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
 
-              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                {categoryStats.map((cat) => (
-                  <div
-                    key={cat.categorie}
-                    className={cn(
-                      "group cursor-pointer rounded-[30px] p-6 text-left transition",
-                      selectedCategory === cat.categorie
-                        ? "border-2 border-[var(--primary)] bg-[#eef6f5] shadow-lg"
-                        : "glass-card border-2 border-transparent hover:shadow-lg",
-                    )}
-                    onClick={() => setSelectedCategory(selectedCategory === cat.categorie ? null : cat.categorie)}
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[var(--accent)]">
-                          <Layers className="h-6 w-6 text-[var(--primary)]" />
+              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                {categoryStats.map((cat, idx) => {
+                  const accent = CATEGORY_COLORS[idx % CATEGORY_COLORS.length];
+                  return (
+                    <div
+                      key={cat.categorie}
+                      className={cn(
+                        "group relative cursor-pointer overflow-hidden rounded-[28px] border-2 bg-white p-5 transition-all hover:-translate-y-1 hover:shadow-xl",
+                        selectedCategory === cat.categorie
+                          ? "border-[var(--primary)] shadow-lg"
+                          : "border-transparent shadow-sm",
+                      )}
+                      onClick={() => setSelectedCategory(selectedCategory === cat.categorie ? null : cat.categorie)}
+                    >
+                      <div className="absolute -right-8 -top-8 h-24 w-24 rounded-full opacity-10 transition-all group-hover:scale-150" style={{ backgroundColor: accent }} />
+                      <div className="relative">
+                        <div className="flex items-start justify-between">
+                          <div className="flex h-12 w-12 items-center justify-center rounded-2xl text-white" style={{ backgroundColor: accent }}>
+                            <Layers className="h-6 w-6" />
+                          </div>
+                          <button
+                            type="button"
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              const next = await deleteCategory(cat.categorie, data);
+                              setData(next);
+                              if (selectedCategory === cat.categorie) setSelectedCategory(null);
+                            }}
+                            className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-xl border border-[var(--border)] bg-white text-[var(--danger)] opacity-0 transition hover:bg-[#fff0ef] group-hover:opacity-100"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
                         </div>
-                        <div>
-                          <h3 className="font-semibold text-[var(--primary-deep)]">{cat.categorie}</h3>
-                          <p className="text-sm text-[var(--muted)]">{cat.count} produit{cat.count !== 1 ? "s" : ""}</p>
+                        <h3 className="mt-4 text-lg font-bold text-[var(--primary-deep)]">{cat.categorie}</h3>
+                        <div className="mt-3 flex items-center gap-3">
+                          <span className="inline-flex items-center gap-1 rounded-full px-3 py-0.5 text-xs font-semibold" style={{ backgroundColor: accent + "18", color: accent }}>
+                            {cat.count} produit{cat.count !== 1 ? "s" : ""}
+                          </span>
+                          <span className="text-xs text-[var(--muted)]">{cat.totalStock} unités</span>
+                        </div>
+                        <div className="mt-4">
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="text-[var(--muted)]">Stock</span>
+                            <span className="font-semibold text-[var(--primary)]">{formatMad(cat.totalValue)}</span>
+                          </div>
+                          <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-[#edf5f5]">
+                            <div
+                              className="h-full rounded-full transition-all duration-500"
+                              style={{ width: `${data && data.produits.length ? (cat.count / data.produits.length) * 100 : 0}%`, backgroundColor: accent }}
+                            />
+                          </div>
+                        </div>
+                        <div className="mt-4 flex items-center justify-between border-t border-[var(--border)] pt-3 text-xs text-[var(--muted)]">
+                          <span>Prix moyen</span>
+                          <span className="font-semibold text-[var(--primary-deep)]">{formatMad(Math.round(cat.totalValue / cat.count))}</span>
                         </div>
                       </div>
-                      <button
-                        type="button"
-                        onClick={async (e) => {
-                          e.stopPropagation();
-                          const next = await deleteCategory(cat.categorie, data);
-                          setData(next);
-                          if (selectedCategory === cat.categorie) setSelectedCategory(null);
-                        }}
-                        className="cursor-pointer rounded-xl border border-[var(--border)] bg-white p-2 text-[var(--danger)] opacity-0 transition hover:bg-[#fff0ef] group-hover:opacity-100"
-                        title="Supprimer la catégorie"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
                     </div>
-                    <div className="mt-5 space-y-2">
-                      <div className="flex items-center justify-between text-sm">
-                        <span className="text-[var(--muted)]">Stock total</span>
-                        <span className="font-semibold text-[var(--primary)]">{cat.totalStock} unités</span>
-                      </div>
-                      <div className="flex items-center justify-between text-sm">
-                        <span className="text-[var(--muted)]">Valeur stock</span>
-                        <span className="font-semibold text-[var(--primary-deep)]">{formatMad(cat.totalValue)}</span>
-                      </div>
-                    </div>
-                    <div className="mt-3">
-                      <div className="h-2 overflow-hidden rounded-full bg-[#edf5f5]">
-                        <div
-                          className="h-full rounded-full bg-[var(--primary)] transition-all"
-                          style={{ width: `${data && data.produits.length ? (cat.count / data.produits.length) * 100 : 0}%` }}
-                        />
-                      </div>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
 
               {selectedCategory && (
-                <div className="glass-card rounded-[30px] p-6">
+                <div className="rounded-[30px] bg-white p-6 shadow-sm">
                   <div className="flex items-center justify-between">
-                    <div>
-                      <h2 className="section-title text-xl font-semibold">{selectedCategory}</h2>
-                      <p className="mt-1 text-sm text-[var(--muted)]">
-                        Produits dans cette catégorie — {data.produits.filter((p) => p.categorie === selectedCategory).length} produit
-                        {data.produits.filter((p) => p.categorie === selectedCategory).length !== 1 ? "s" : ""}
-                      </p>
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-12 w-12 items-center justify-center rounded-2xl" style={{ backgroundColor: (CATEGORY_COLORS[categoryStats.findIndex((c) => c.categorie === selectedCategory) % CATEGORY_COLORS.length] || "#246f72") + "18" }}>
+                        <Layers className="h-6 w-6 text-[var(--primary)]" />
+                      </div>
+                      <div>
+                        <h2 className="section-title text-xl font-bold">{selectedCategory}</h2>
+                        <p className="mt-0.5 text-sm text-[var(--muted)]">
+                          {data.produits.filter((p) => p.categorie === selectedCategory).length} produit
+                          {data.produits.filter((p) => p.categorie === selectedCategory).length !== 1 ? "s" : ""}
+                        </p>
+                      </div>
                     </div>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedCategory(null)}
+                      className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-xl border border-[var(--border)] bg-white transition hover:bg-[#f5f5f5]"
+                    >
+                      <X className="h-4 w-4 text-[var(--muted)]" />
+                    </button>
                   </div>
                   <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                     {data.produits
                       .filter((p) => p.categorie === selectedCategory)
                       .map((product) => (
-                        <div key={product.id} className="flex items-center gap-3 rounded-2xl border border-[var(--border)] bg-white/75 p-3">
-                          <Image src={product.image_url} alt={product.nom} width={48} height={48} className="h-12 w-12 rounded-xl bg-white object-contain p-1" />
+                        <div key={product.id} className="group/card flex items-center gap-3 rounded-2xl border border-[var(--border)] bg-white/75 p-3 transition-all hover:border-[var(--primary)]/20 hover:shadow-md">
+                          <div className="relative shrink-0">
+                            <img src={product.image_url} alt={product.nom} width={48} height={48} className="h-12 w-12 rounded-xl bg-white object-contain p-1 transition-all group-hover/card:scale-105" />
+                            {product.stock <= 5 && (
+                              <div className="absolute -right-1 -top-1 h-3 w-3 rounded-full border-2 border-white bg-[var(--danger)]" />
+                            )}
+                          </div>
                           <div className="min-w-0 flex-1">
                             <p className="truncate text-sm font-semibold text-[var(--primary-deep)]">{product.nom}</p>
-                            <p className="text-xs text-[var(--muted)]">{formatMad(product.prix)}</p>
+                            <div className="flex items-center gap-2 text-xs text-[var(--muted)]">
+                              <span>{formatMad(product.prix)}</span>
+                              <span>·</span>
+                              <span className={product.stock <= 5 ? "text-[var(--danger)] font-semibold" : ""}>{product.stock} en stock</span>
+                            </div>
+                            {product.date_expiration && new Date(product.date_expiration) <= new Date(Date.now() + 90 * 24 * 60 * 60 * 1000) && (
+                              <span className={cn("mt-0.5 inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold", new Date(product.date_expiration) < new Date() ? "bg-[#fff0ef] text-[var(--danger)]" : "bg-[#fff8e5] text-[#b8860b]")}>
+                                {new Date(product.date_expiration) < new Date() ? "Périmé" : `Exp. ${new Date(product.date_expiration).toLocaleDateString("fr-FR")}`}
+                              </span>
+                            )}
                           </div>
                           <button
                             type="button"
@@ -894,8 +1123,7 @@ export function AppShell() {
                               const next = await saveProduct(updated, data);
                               setData(next);
                             }}
-                            className="cursor-pointer rounded-xl border border-[var(--border)] bg-white p-1.5 text-[var(--danger)] transition hover:bg-[#fff0ef]"
-                            title="Retirer de la catégorie"
+                            className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-xl border border-[var(--border)] bg-white text-[var(--danger)] opacity-0 transition hover:bg-[#fff0ef] group-hover/card:opacity-100"
                           >
                             <X className="h-3.5 w-3.5" />
                           </button>
@@ -907,47 +1135,56 @@ export function AppShell() {
                       </p>
                     )}
                   </div>
-                  <div className="mt-5 border-t border-[var(--border)] pt-5">
-                    <p className="mb-3 text-sm font-medium text-[var(--primary-deep)]">Ajouter des produits à cette catégorie</p>
-                    <div className="flex flex-wrap gap-2">
-                      {data.produits
-                        .filter((p) => p.categorie !== selectedCategory)
-                        .map((product) => (
-                          <button
-                            key={product.id}
-                            type="button"
-                            onClick={async () => {
-                              const updated = { ...product, categorie: selectedCategory };
-                              const next = await saveProduct(updated, data);
-                              setData(next);
-                            }}
-                            className="cursor-pointer rounded-full border border-[var(--border)] bg-white px-3 py-1.5 text-xs font-medium text-[var(--primary-deep)] transition hover:bg-[var(--accent)]"
-                          >
-                            + {product.nom}
-                          </button>
-                        ))}
-                    </div>
+                  <div className="mt-5">
+                    <button
+                      type="button"
+                      onClick={() => setCategoryAddOpen(!categoryAddOpen)}
+                      className="flex w-full cursor-pointer items-center justify-between rounded-2xl px-5 py-3.5 text-white transition hover:opacity-90"
+                      style={{ backgroundColor: "#246f72" }}
+                    >
+                      <div className="flex items-center gap-2.5">
+                        <Plus className="h-4 w-4" />
+                        <span className="text-sm font-semibold">Ajouter des produits à cette catégorie</span>
+                      </div>
+                      <ChevronDown className={cn("h-4 w-4 transition-transform", categoryAddOpen && "rotate-180")} />
+                    </button>
+                    {categoryAddOpen && (
+                      <div className="mt-3">
+                        <input
+                          value={categoryAddQuery}
+                          onChange={(e) => setCategoryAddQuery(e.target.value)}
+                          placeholder="Rechercher un produit..."
+                          className="w-full rounded-2xl border border-[var(--border)] bg-white px-4 py-2.5 text-sm outline-none transition focus:border-[var(--primary)]"
+                        />
+                        <div className="mt-3 grid max-h-48 gap-1.5 overflow-y-auto rounded-2xl border border-[var(--border)] bg-white/60 p-2">
+                          {data.produits
+                            .filter((p) => p.categorie !== selectedCategory && (!categoryAddQuery || p.nom.toLowerCase().includes(categoryAddQuery.toLowerCase())))
+                            .slice(0, 20)
+                            .map((product) => (
+                              <button
+                                key={product.id}
+                                type="button"
+                                onClick={async () => {
+                                  const updated = { ...product, categorie: selectedCategory };
+                                  const next = await saveProduct(updated, data);
+                                  setData(next);
+                                }}
+                                className="flex cursor-pointer items-center gap-2 rounded-xl px-3 py-2 text-left text-sm text-[var(--primary-deep)] transition hover:bg-[var(--accent)]"
+                              >
+                                <Plus className="h-3.5 w-3.5 shrink-0 text-[var(--primary)]" />
+                                <span className="truncate">{product.nom}</span>
+                              </button>
+                            ))}
+                          {data.produits.filter((p) => p.categorie !== selectedCategory && (!categoryAddQuery || p.nom.toLowerCase().includes(categoryAddQuery.toLowerCase()))).length === 0 && (
+                            <p className="py-4 text-center text-xs text-[var(--muted)]">Aucun produit trouvé</p>
+                          )}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
 
-              <div className="glass-card rounded-[30px] p-6">
-                <h2 className="section-title text-xl font-semibold">Répartition du catalogue</h2>
-                <div className="mt-5 space-y-4">
-                  {categoryStats.map((cat) => (
-                    <div key={cat.categorie} className="flex items-center gap-4">
-                      <span className="w-48 shrink-0 text-sm font-medium text-[var(--primary-deep)]">{cat.categorie}</span>
-                      <div className="flex h-3 flex-1 overflow-hidden rounded-full bg-[#edf5f5]">
-                        <div
-                          className="h-full rounded-full bg-[var(--primary)] transition-all"
-                          style={{ width: `${data && data.produits.length ? (cat.count / data.produits.length) * 100 : 0}%` }}
-                        />
-                      </div>
-                      <span className="w-24 text-right text-sm font-semibold text-[var(--primary)]">{cat.count}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
             </section>
           )}
 
@@ -1105,16 +1342,36 @@ export function AppShell() {
           {view === "pos" && (
             <section className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
               <div className="glass-card rounded-[30px] p-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h2 className="section-title text-xl font-semibold">POS / Encaissement</h2>
-                    <p className="mt-1 text-sm text-[var(--muted)]">
-                      Cliquez sur un produit pour l&apos;ajouter au panier.
-                    </p>
+                <div>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h2 className="section-title text-xl font-semibold">POS / Encaissement</h2>
+                      <p className="mt-1 text-sm text-[var(--muted)]">
+                        Cliquez sur un produit pour l&apos;ajouter au panier.
+                      </p>
+                    </div>
                   </div>
+                  <label className="mt-4 flex items-center gap-2 rounded-2xl border border-[var(--border)] bg-white px-4 py-3 transition focus-within:border-[var(--primary)]">
+                    <Search className="h-4 w-4 shrink-0 text-[var(--muted)]" />
+                    <input
+                      value={barcodeQuery}
+                      onChange={(e) => setBarcodeQuery(e.target.value)}
+                      placeholder="Rechercher par nom ou code-barres"
+                      className="w-full border-0 bg-transparent outline-none"
+                    />
+                    {barcodeQuery && (
+                      <button
+                        type="button"
+                        onClick={() => setBarcodeQuery("")}
+                        className="cursor-pointer text-[var(--muted)] hover:text-[var(--primary-deep)]"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    )}
+                  </label>
                 </div>
-                <div className="mt-5 grid gap-4 md:grid-cols-2">
-                  {data.produits.map((product) => (
+                <div className="mt-5 grid max-h-[520px] gap-4 overflow-y-auto pr-1 md:grid-cols-2">
+                  {posProducts.map((product) => (
                     <button
                       key={product.id}
                       type="button"
@@ -1123,16 +1380,19 @@ export function AppShell() {
                       className="cursor-pointer rounded-[26px] border border-[var(--border)] bg-white/80 p-4 text-left transition hover:-translate-y-0.5 hover:shadow-lg disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       <div className="flex items-center gap-4">
-                        <Image
+                        <img
                           src={product.image_url}
                           alt={product.nom}
                           width={72}
                           height={72}
-                          className="h-18 w-18 rounded-2xl border border-[var(--border)] bg-[#f9fcfb] p-2 object-contain"
+                          className="h-18 w-18 shrink-0 rounded-2xl border border-[var(--border)] bg-[#f9fcfb] p-2 object-contain"
                         />
-                        <div>
+                        <div className="min-w-0 flex-1">
                           <p className="font-semibold text-[var(--primary-deep)]">{product.nom}</p>
                           <p className="text-sm text-[var(--muted)]">{product.categorie}</p>
+                          {product.code_barre && (
+                            <p className="mt-0.5 font-mono text-[10px] text-[var(--muted)]">#{product.code_barre}</p>
+                          )}
                           <p className="mt-2 text-sm font-medium text-[var(--primary)]">
                             {formatMad(product.prix)}
                           </p>
@@ -1379,6 +1639,32 @@ export function AppShell() {
                         <p className="text-xs text-[var(--muted)]">Remet le jeu de données de démonstration par défaut</p>
                       </div>
                     </button>
+                    {dataMode === "cloud" && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={handleSeedSupabase}
+                          disabled={seeding}
+                          className="flex w-full cursor-pointer items-center gap-3 rounded-2xl border border-[var(--primary)]/20 bg-white/75 px-4 py-3 text-left transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          <Upload className={cn("h-5 w-5 text-[var(--primary)]", seeding && "animate-spin")} />
+                          <div>
+                            <p className="text-sm font-medium text-[var(--primary-deep)]">
+                              {seeding ? "Importation..." : "Importer les données seed"}
+                            </p>
+                            <p className="text-xs text-[var(--muted)]">10 catégories, 50 produits, 20 clients, 3 ventes</p>
+                          </div>
+                        </button>
+                        {seedStatus && (
+                          <div className={cn(
+                            "rounded-2xl px-4 py-3 text-sm",
+                            seedStatus.ok ? "bg-[#e8f5e9] text-[#2e7d32]" : "bg-[#ffebee] text-[#c62828]",
+                          )}>
+                            {seedStatus.msg}
+                          </div>
+                        )}
+                      </>
+                    )}
                   </div>
                 </div>
               </div>
@@ -1436,6 +1722,14 @@ export function AppShell() {
           )}
         </main>
       </div>
+
+      {showInvoice && (
+        <InvoiceReceipt
+          cart={cart}
+          client={selectedClient}
+          onClose={closeInvoice}
+        />
+      )}
     </div>
   );
 }
@@ -1469,33 +1763,50 @@ function QuickAction({
   );
 }
 
-function MiniAction({
-  title,
-  description,
-  onClick,
-}: {
-  title: string;
-  description: string;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="cursor-pointer rounded-2xl border border-[var(--border)] bg-white/78 px-4 py-4 text-left transition hover:bg-white"
-    >
-      <p className="font-semibold text-[var(--primary-deep)]">{title}</p>
-      <p className="mt-1 text-sm text-[var(--muted)]">{description}</p>
-    </button>
-  );
-}
+
+
+const CATEGORY_COLORS = [
+  "#246f72",
+  "#d9675d",
+  "#b8860b",
+  "#2d8b57",
+  "#5b6abf",
+  "#c77dba",
+  "#e8914a",
+  "#4aa3a8",
+  "#8b6f4a",
+  "#a05d8a",
+];
+
+const statIcons: Record<string, LucideIcon> = {
+  "Produits": Package,
+  "Stock total": Layers,
+  "Ventes du jour": WalletCards,
+  "Alertes stock": ChartColumnBig,
+};
+
+const statAccents: Record<string, string> = {
+  "Produits": "#246f72",
+  "Stock total": "#2d878b",
+  "Ventes du jour": "#1a5c5f",
+  "Alertes stock": "#c0392b",
+};
 
 function StatCard({ title, value, subtitle }: { title: string; value: string; subtitle: string }) {
+  const Icon = statIcons[title] ?? Package;
+  const accent = statAccents[title] ?? "#246f72";
   return (
-    <div className="glass-card rounded-[28px] p-5">
-      <p className="text-sm uppercase tracking-[0.2em] text-[var(--muted)]">{title}</p>
-      <p className="mt-3 text-3xl font-semibold text-[var(--primary-deep)]">{value}</p>
-      <p className="mt-2 text-sm text-[var(--muted)]">{subtitle}</p>
+    <div className="group cursor-pointer rounded-[28px] bg-white p-5 shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-xl" style={{ borderLeft: "4px solid " + accent }}>
+      <div className="flex items-start justify-between">
+        <div>
+          <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">{title}</p>
+          <p className="mt-3 text-3xl font-semibold" style={{ color: accent }}>{value}</p>
+          <p className="mt-2 text-sm text-[var(--muted)]">{subtitle}</p>
+        </div>
+        <div className="flex h-12 w-12 items-center justify-center rounded-2xl opacity-60 transition-all group-hover:scale-110 group-hover:opacity-100" style={{ backgroundColor: accent + "18" }}>
+          <Icon className="h-5 w-5" style={{ color: accent }} />
+        </div>
+      </div>
     </div>
   );
 }

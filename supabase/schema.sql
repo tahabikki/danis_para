@@ -1,5 +1,9 @@
 create extension if not exists "pgcrypto";
 
+create table if not exists categories (
+  nom text primary key
+);
+
 create table if not exists produits (
   id uuid primary key default gen_random_uuid(),
   nom text not null,
@@ -7,7 +11,7 @@ create table if not exists produits (
   prix numeric(10,2) not null,
   stock integer not null default 0,
   image_url text not null,
-  categorie text not null
+  categorie text not null references categories(nom) on delete restrict
 );
 
 create table if not exists clients (

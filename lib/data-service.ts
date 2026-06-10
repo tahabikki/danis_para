@@ -57,15 +57,16 @@ function normalizeCloudData(data: {
 
 export async function loadData(): Promise<AppData> {
   if (dataMode === "cloud" && supabase) {
-    const [produitsRes, clientsRes, ventesRes] = await Promise.all([
+    const [produitsRes, clientsRes, ventesRes, categoriesRes] = await Promise.all([
       supabase.from("produits").select("*").order("nom"),
       supabase.from("clients").select("*").order("nom"),
       supabase.from("ventes").select("*").order("date", { ascending: false }),
+      supabase.from("categories").select("nom").order("nom"),
     ]);
 
     const produits = produitsRes.data as Product[] | null;
-    const fromProducts = [...new Set((produits ?? []).map((p) => p.categorie))];
-    const merged = [...new Set([...defaultCategories, ...fromProducts])];
+    const dbCategories: string[] = (categoriesRes.data ?? []).map((r: { nom: string }) => r.nom);
+    const merged = [...new Set([...defaultCategories, ...dbCategories])];
 
     return normalizeCloudData({
       produits,
@@ -147,7 +148,10 @@ export async function saveProduct(product: Product, current: AppData) {
       const uploaded = await uploadImage(file, product.nom);
       image_url = uploaded || "/assets/logo/green_logo.jpeg";
     }
-    await supabase.from("produits").upsert({ ...product, image_url });
+    const { error: catError } = await supabase.from("categories").upsert({ nom: product.categorie }, { ignoreDuplicates: true });
+    if (catError) console.warn("Category upsert warning:", catError.message);
+    const { error } = await supabase.from("produits").upsert({ ...product, image_url });
+    if (error) console.error("Product upsert error:", error.message);
     return loadData();
   }
 
@@ -279,8 +283,12 @@ export async function deleteClient(clientId: string, current: AppData) {
 export async function saveCategory(name: string, current: AppData) {
   const trimmed = name.trim().toUpperCase();
   if (!trimmed || current.categories.includes(trimmed)) return current;
+  if (dataMode === "cloud" && supabase) {
+    await supabase.from("categories").insert({ nom: trimmed });
+    return loadData();
+  }
   const next = { ...current, categories: [...current.categories, trimmed] };
-  if (dataMode !== "cloud") await persistLocal(next);
+  await persistLocal(next);
   return next;
 }
 
@@ -294,6 +302,7 @@ export async function deleteCategory(name: string, current: AppData) {
       .from("produits")
       .update({ categorie: "NON CLASSÉ" })
       .eq("categorie", name);
+    await supabase.from("categories").delete().eq("nom", name);
     return loadData();
   }
 

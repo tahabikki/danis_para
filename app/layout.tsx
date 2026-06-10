@@ -4,6 +4,9 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "Dani's Parapharmacy",
   description: "Demo de gestion de parapharmacie en mode local ou cloud.",
+  icons: {
+    icon: "/favicon.svg",
+  },
 };
 
 export default function RootLayout({

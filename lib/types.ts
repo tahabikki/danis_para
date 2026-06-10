@@ -5,6 +5,10 @@ export const categories = [
   "COMPLÉMENT ALIMENTAIRE",
   "ESPACE BÉBÉ & MAMAN",
   "DERMOCOSMÉTIQUE",
+  "HYGIÈNE & SOINS",
+  "NUTRITION & DIÉTÉTIQUE",
+  "SOLAIRES & PROTECTION",
+  "PREMIERS SOINS",
 ] as const;
 
 export type ProductCategory = (typeof categories)[number];
@@ -17,6 +21,8 @@ export type Product = {
   stock: number;
   image_url: string;
   categorie: string;
+  date_expiration?: string | null;
+  code_barre?: string | null;
 };
 
 export type Client = {
