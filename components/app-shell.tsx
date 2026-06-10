@@ -64,7 +64,7 @@ const emptyProduct: Product = {
   description: "",
   prix: 0,
   stock: 0,
-  image_url: "/products/creme-hydratante.jpeg",
+  image_url: "",
   categorie: "DERMOCOSMÉTIQUE",
 };
 
@@ -726,15 +726,13 @@ export function AppShell() {
                             className="hidden"
                           />
                         </label>
-                        {productForm.image_url && (
-                          <Image
-                            src={productForm.image_url}
-                            alt="Aperçu"
-                            width={48}
-                            height={48}
-                            className="h-12 w-12 rounded-xl border border-[var(--border)] bg-white object-contain p-1"
-                          />
-                        )}
+                        <Image
+                          src={productForm.image_url || "/assets/logo/green_logo.jpeg"}
+                          alt={productForm.nom || "Logo"}  
+                          width={48}
+                          height={48}
+                          className="h-12 w-12 rounded-xl border border-[var(--border)] bg-white object-contain p-1"
+                        />
                       </div>
                     </label>
                     <button

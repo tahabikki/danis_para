@@ -1,7 +1,7 @@
 "use client";
 
 import { seedData } from "@/data/seed";
-import { dataMode, supabase } from "@/lib/supabase";
+import { dataMode, getStorageUrl, supabase } from "@/lib/supabase";
 import { AppData, CartItem, Client, Product, Sale, categories as defaultCategories } from "@/lib/types";
 
 const STORAGE_KEY = "danis-parapharmacy-demo";
@@ -10,13 +10,24 @@ function migrateProductImageUrl(imageUrl: string) {
   return imageUrl.endsWith(".svg") ? imageUrl.replace(".svg", ".jpeg") : imageUrl;
 }
 
+function resolveImageUrl(imageUrl: string): string {
+  const migrated = migrateProductImageUrl(imageUrl);
+  if (dataMode === "cloud" && migrated.startsWith("/products/")) {
+    const storageUrl = getStorageUrl();
+    if (storageUrl) {
+      return `${storageUrl}/${migrated.replace("/products/", "")}`;
+    }
+  }
+  return migrated;
+}
+
 function migrateDataImages(data: AppData): AppData {
   return {
     ...data,
     categories: data.categories ?? [...defaultCategories],
     produits: data.produits.map((product) => ({
       ...product,
-      image_url: migrateProductImageUrl(product.image_url),
+      image_url: resolveImageUrl(product.image_url),
     })),
   };
 }
@@ -36,12 +47,12 @@ function normalizeCloudData(data: {
   ventes?: Sale[] | null;
   categories?: string[];
 }): AppData {
-  return {
+  return migrateDataImages({
     produits: data.produits ?? [],
     clients: data.clients ?? [],
     ventes: data.ventes ?? [],
     categories: data.categories ?? [...defaultCategories],
-  };
+  });
 }
 
 export async function loadData(): Promise<AppData> {
@@ -92,9 +103,51 @@ export async function resetLocalData() {
   return data;
 }
 
+async function uploadImage(file: File, productName: string): Promise<string | null> {
+  if (dataMode !== "cloud" || !supabase) return null;
+  const ext = file.name.split(".").pop() || "jpeg";
+  const slug = productName
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 40);
+  const fileName = `${slug}.${ext}`;
+  const { data, error } = await supabase.storage
+    .from("products")
+    .upload(fileName, file, { upsert: false });
+  if (error) return null;
+  const storageUrl = getStorageUrl();
+  return storageUrl ? `${storageUrl}/${data.path}` : null;
+}
+
+async function deleteStorageImage(imageUrl: string) {
+  if (dataMode !== "cloud" || !imageUrl.startsWith(getStorageUrl() || "")) return;
+  const fileName = imageUrl.split("/").pop();
+  if (!fileName) return;
+  try {
+    await fetch("/api/delete-storage", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ filename: fileName }),
+    });
+  } catch {
+    // ignore
+  }
+}
+
 export async function saveProduct(product: Product, current: AppData) {
   if (dataMode === "cloud" && supabase) {
-    await supabase.from("produits").upsert(product);
+    let image_url = product.image_url;
+    const oldProduct = current.produits.find((p) => p.id === product.id);
+    if (image_url.startsWith("data:")) {
+      if (oldProduct) await deleteStorageImage(oldProduct.image_url);
+      const blob = await (await fetch(image_url)).blob();
+      const file = new File([blob], "image.jpeg", { type: "image/jpeg" });
+      const uploaded = await uploadImage(file, product.nom);
+      image_url = uploaded || "/assets/logo/green_logo.jpeg";
+    }
+    await supabase.from("produits").upsert({ ...product, image_url });
     return loadData();
   }
 
@@ -184,6 +237,8 @@ export async function processSale(
 
 export async function deleteProduct(productId: string, current: AppData) {
   if (dataMode === "cloud" && supabase) {
+    const product = current.produits.find((p) => p.id === productId);
+    if (product) await deleteStorageImage(product.image_url);
     await supabase.from("produits").delete().eq("id", productId);
     return loadData();
   }
