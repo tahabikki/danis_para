@@ -9,6 +9,7 @@ import {
   Info,
   Layers,
   LogOut,
+  Menu,
   Package,
   Pencil,
   Plus,
@@ -106,6 +107,7 @@ export function AppShell() {
   const [seedStatus, setSeedStatus] = useState<{ ok: boolean; msg: string } | null>(null);
   const [savingProduct, setSavingProduct] = useState(false);
   const [saveFeedback, setSaveFeedback] = useState<string | null>(null);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   useEffect(() => {
     const session = window.sessionStorage.getItem(SESSION_KEY);
@@ -424,11 +426,12 @@ export function AppShell() {
   const selectedClient = data.clients.find((client) => client.id === selectedClientId);
 
   return (
-    <div className="flex h-screen overflow-hidden">
+    <div className="relative flex h-screen overflow-hidden">
       <div className="mx-auto flex w-full max-w-[1600px] gap-4 px-4 md:px-6">
+        {/* ── Desktop sidebar (lg+) ── */}
         <aside
-          className="flex w-[300px] shrink-0 flex-col rounded-[34px] p-6 text-white shadow-[0_24px_70px_rgba(15,61,64,0.28)]"
-          style={{ background: "linear-gradient(180deg, #113c3f 0%, #19585b 44%, #246f72 100%)", height: "calc(100vh - 3rem)", marginTop: "1.5rem", marginBottom: "1.5rem" }}
+          className="hidden w-[300px] shrink-0 flex-col overflow-y-auto rounded-[34px] p-6 text-white shadow-[0_24px_70px_rgba(15,61,64,0.28)] lg:mb-6 lg:mt-6 lg:flex"
+          style={{ background: "linear-gradient(180deg, #113c3f 0%, #19585b 44%, #246f72 100%)", height: "calc(100vh - 3rem)" }}
         >
           <div className="flex items-center gap-3">
             <Image src="/assets/logo/white_logo.jpeg" alt="Logo Dani's Parapharmacy" width={60} height={60} className="h-15 w-15 rounded-2xl object-cover" />
@@ -475,8 +478,84 @@ export function AppShell() {
           </button>
         </aside>
 
-        <main className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto py-6" style={{ scrollbarGutter: "stable" }}>
-          <header className="glass-card rounded-[34px] p-6">
+        {/* ── Main content area ── */}
+        <main className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto py-3 md:gap-4 md:py-6" style={{ scrollbarGutter: "stable" }}>
+          {/* ── Mobile top navbar (< lg) ── */}
+          <div className="flex items-center justify-between rounded-[34px] bg-white p-3 shadow-sm lg:hidden">
+            <button
+              type="button"
+              onClick={() => setSidebarOpen(true)}
+              className="flex cursor-pointer items-center justify-center rounded-2xl bg-[var(--primary)] p-2.5 text-white transition hover:bg-[var(--primary-deep)]"
+            >
+              <Menu className="h-5 w-5" />
+            </button>
+            <h1 className="text-base font-semibold text-[var(--primary-deep)]">
+              {view === "dashboard" && "Tableau de bord"}
+              {view === "produits" && "Produits"}
+              {view === "categories" && "Catégories"}
+              {view === "clients" && "Clients"}
+              {view === "pos" && "Point de vente"}
+              {view === "ventes" && "Ventes"}
+              {view === "settings" && "Paramètres"}
+            </h1>
+            <div className="w-10" />
+          </div>
+
+          {/* ── Mobile menu overlay (< lg) ── */}
+          {sidebarOpen && (
+            <div className="fixed inset-0 z-50 lg:hidden">
+              <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" onClick={() => setSidebarOpen(false)} />
+              <div className="absolute inset-y-0 left-0 flex w-[280px] flex-col p-4 text-white shadow-2xl"
+                style={{ background: "linear-gradient(180deg, #113c3f 0%, #19585b 44%, #246f72 100%)" }}
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2.5">
+                    <Image src="/assets/logo/white_logo.jpeg" alt="Logo" width={36} height={36} className="h-9 w-9 rounded-xl object-cover" />
+                    <span className="text-xs font-medium uppercase tracking-[0.2em] text-white/60">Menu</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setSidebarOpen(false)}
+                    className="flex cursor-pointer items-center justify-center rounded-xl bg-white/10 p-2 text-white transition hover:bg-white/20"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+                <nav className="mt-6 flex-1 space-y-1">
+                  {navItems.map((item) => {
+                    const Icon = item.icon;
+                    return (
+                      <button
+                        key={item.key}
+                        type="button"
+                        onClick={() => { setView(item.key); setSidebarOpen(false); }}
+                        className={cn(
+                          "flex w-full cursor-pointer items-center gap-3 rounded-2xl px-3 py-2.5 text-left text-sm font-medium transition",
+                          view === item.key
+                            ? "bg-white text-[var(--primary-deep)] shadow-lg"
+                            : "bg-white/6 text-white hover:bg-white/14",
+                        )}
+                      >
+                        <Icon className="h-4 w-4 shrink-0" />
+                        <span>{item.label}</span>
+                      </button>
+                    );
+                  })}
+                </nav>
+                <button
+                  type="button"
+                  onClick={handleLogout}
+                  className="mt-2 flex w-full cursor-pointer items-center justify-center gap-2 rounded-2xl bg-white/10 px-3 py-2.5 text-sm font-semibold text-white transition hover:bg-white/20"
+                >
+                  <LogOut className="h-4 w-4" />
+                  Déconnexion
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* ── Page header (desktop) ── */}
+          <header className="hidden rounded-[34px] bg-white p-6 shadow-sm lg:block">
             <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
               <div>
                 <p className="text-sm font-medium uppercase tracking-[0.2em] text-[var(--muted)]">
@@ -527,7 +606,7 @@ export function AppShell() {
           {view === "dashboard" && (
             <section className="space-y-4">
               <div className="overflow-hidden rounded-[30px] text-white" style={{ background: "linear-gradient(135deg, #1a5c5f 0%, #2d878b 50%, #3a9fa3 100%)" }}>
-                <div className="relative px-6 py-5">
+                <div className="relative px-4 py-4 md:px-6 md:py-5">
                   <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_30%,rgba(255,255,255,0.12),transparent_40%),radial-gradient(circle_at_80%_70%,rgba(255,255,255,0.08),transparent_30%)]" />
                   <div className="relative flex items-center justify-between">
                     <div>
@@ -539,28 +618,28 @@ export function AppShell() {
                         {new Date().toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}
                       </p>
                     </div>
-                    <div className="hidden items-center gap-4 sm:flex">
-                      <div className="rounded-2xl bg-white/15 px-4 py-3 text-center backdrop-blur-sm">
-                        <p className="text-2xl font-bold">{dashboardStats.totalProducts}</p>
-                        <p className="text-[11px] uppercase tracking-[0.15em] text-white/70">Produits</p>
+                    <div className="flex items-center gap-3">
+                      <div className="rounded-2xl bg-white/15 px-3 py-2 text-center backdrop-blur-sm md:px-4 md:py-3">
+                        <p className="text-lg font-bold md:text-2xl">{dashboardStats.totalProducts}</p>
+                        <p className="text-[10px] uppercase tracking-[0.15em] text-white/70 md:text-[11px]">Produits</p>
                       </div>
-                      <div className="rounded-2xl bg-white/15 px-4 py-3 text-center backdrop-blur-sm">
-                        <p className="text-2xl font-bold">{dashboardStats.lowStock.length}</p>
-                        <p className="text-[11px] uppercase tracking-[0.15em] text-white/70">Alertes</p>
+                      <div className="rounded-2xl bg-white/15 px-3 py-2 text-center backdrop-blur-sm md:px-4 md:py-3">
+                        <p className="text-lg font-bold md:text-2xl">{dashboardStats.lowStock.length}</p>
+                        <p className="text-[10px] uppercase tracking-[0.15em] text-white/70 md:text-[11px]">Alertes</p>
                       </div>
                     </div>
                   </div>
                 </div>
               </div>
 
-              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
                 <StatCard title="Produits" value={dashboardStats.totalProducts.toString()} subtitle="Références actives" />
                 <StatCard title="Stock total" value={dashboardStats.totalStock.toString()} subtitle="Unités en rayon" />
                 <StatCard title="Ventes du jour" value={formatMad(dashboardStats.dailySales)} subtitle="Chiffre d'affaires" />
                 <StatCard title="Alertes stock" value={dashboardStats.lowStock.length.toString()} subtitle="Articles à surveiller" />
               </div>
 
-              <div className="rounded-[30px] bg-white p-6 shadow-sm transition-all hover:shadow-md">
+              <div className="rounded-[30px] bg-white p-4 shadow-sm transition-all hover:shadow-md md:p-6">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
                     <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#edf5f5]">
@@ -581,7 +660,7 @@ export function AppShell() {
                     Voir ventes
                   </button>
                 </div>
-                <div className="mt-5 grid gap-4 md:grid-cols-2">
+                <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2">
                   {dashboardStats.topProducts.map((item, idx) => (
                     <div key={item.produit?.id} className="group flex items-center gap-4 rounded-[26px] border border-[var(--border)] bg-white/75 p-4 transition-all hover:-translate-y-0.5 hover:border-[var(--primary)]/20 hover:shadow-md">
                       <div className="relative">
@@ -614,7 +693,7 @@ export function AppShell() {
                 </div>
               </div>
 
-              <div className="rounded-[30px] bg-white p-6 shadow-sm transition-all hover:shadow-md">
+              <div className="rounded-[30px] bg-white p-4 shadow-sm transition-all hover:shadow-md md:p-6">
                 <div className="flex items-center gap-3">
                   <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#edf5f5]">
                     <WalletCards className="h-5 w-5 text-[var(--primary)]" />
@@ -629,7 +708,7 @@ export function AppShell() {
                 </div>
               </div>
 
-              <div className="rounded-[30px] bg-white p-6 shadow-sm transition-all hover:shadow-md">
+              <div className="rounded-[30px] bg-white p-4 shadow-sm transition-all hover:shadow-md md:p-6">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
                     <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#fff0ef]">
@@ -643,7 +722,7 @@ export function AppShell() {
                     </div>
                   </div>
                 </div>
-                <div className="mt-5 grid gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
+                <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
                   {dashboardStats.lowStock.map((product) => (
                     <div key={product.id} className="group flex items-center justify-between rounded-2xl border border-[var(--border)] bg-white/72 px-4 py-3 transition-all hover:-translate-y-0.5 hover:border-[var(--danger)]/30 hover:shadow-md">
                       <div className="flex items-center gap-3">
@@ -670,7 +749,7 @@ export function AppShell() {
           )}
 
           {view === "produits" && (
-            <section className="grid gap-4 xl:grid-cols-[1.35fr_0.85fr]">
+            <section className="grid grid-cols-1 gap-4 xl:grid-cols-[1.35fr_0.85fr]">
               <div className="rounded-[30px] bg-white p-6 shadow-sm">
                 <div className="flex flex-wrap items-end justify-between gap-4">
                   <div className="flex items-center gap-5">
@@ -721,7 +800,7 @@ export function AppShell() {
                     </div>
                   </div>
                 </div>
-                <div className="mt-5 grid gap-5 md:grid-cols-2 2xl:grid-cols-3">
+                <div className="mt-5 grid grid-cols-1 gap-5 md:grid-cols-2 2xl:grid-cols-3">
                   {filteredProducts.map((product) => (
                     <article key={product.id} className="group rounded-[28px] border border-[var(--border)] bg-white/75 transition hover:shadow-lg">
                       <div className="relative overflow-hidden rounded-t-[28px] bg-[linear-gradient(180deg,#f8fbfa_0%,#f0f6f3_100%)]">
@@ -817,11 +896,11 @@ export function AppShell() {
                     {editingProductId ? "Modifiez les champs ci-dessous et enregistrez." : "Ajoutez un produit au catalogue en remplissant les champs."}
                   </p>
                   <div className="mt-5 space-y-4">
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                       <Input label="Nom" value={productForm.nom} onChange={(value) => setProductForm((current) => ({ ...current, nom: value }))} />
                       <Input label="Prix (MAD)" type="number" value={String(productForm.prix)} onChange={(value) => setProductForm((current) => ({ ...current, prix: Number(value) }))} />
                     </div>
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                       <label className="block text-sm font-medium text-[var(--primary-deep)]">
                         Code-barres
                         <input
@@ -851,7 +930,7 @@ export function AppShell() {
                         className="mt-2 w-full rounded-2xl border border-[var(--border)] bg-white px-4 py-3 text-sm outline-none transition focus:border-[var(--primary)]"
                       />
                     </label>
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                       <label className="block text-sm font-medium text-[var(--primary-deep)]">
                         Stock
                         <input
@@ -1007,7 +1086,7 @@ export function AppShell() {
                 </div>
               </div>
 
-              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                 {categoryStats.map((cat, idx) => {
                   const accent = CATEGORY_COLORS[idx % CATEGORY_COLORS.length];
                   return (
@@ -1092,7 +1171,7 @@ export function AppShell() {
                       <X className="h-4 w-4 text-[var(--muted)]" />
                     </button>
                   </div>
-                  <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                  <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
                     {data.produits
                       .filter((p) => p.categorie === selectedCategory)
                       .map((product) => (
@@ -1189,7 +1268,7 @@ export function AppShell() {
           )}
 
           {view === "clients" && (
-            <section className="grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">
+            <section className="grid grid-cols-1 gap-4 xl:grid-cols-[0.95fr_1.05fr]">
               <div className="glass-card rounded-[30px] p-6">
                 <div className="flex items-center justify-between">
                   <div>
@@ -1340,7 +1419,7 @@ export function AppShell() {
           )}
 
           {view === "pos" && (
-            <section className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
+            <section className="grid grid-cols-1 gap-4 xl:grid-cols-[1.2fr_0.8fr]">
               <div className="glass-card rounded-[30px] p-6">
                 <div>
                   <div className="flex items-center justify-between">
@@ -1370,7 +1449,7 @@ export function AppShell() {
                     )}
                   </label>
                 </div>
-                <div className="mt-5 grid max-h-[520px] gap-4 overflow-y-auto pr-1 md:grid-cols-2">
+                <div className="mt-5 grid max-h-[520px] grid-cols-1 gap-4 overflow-y-auto pr-1 md:grid-cols-2">
                   {posProducts.map((product) => (
                     <button
                       key={product.id}
@@ -1571,7 +1650,7 @@ export function AppShell() {
           )}
 
           {view === "settings" && (
-            <section className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
+            <section className="grid grid-cols-1 gap-4 xl:grid-cols-[1.15fr_0.85fr]">
               <div className="space-y-4">
                 <div className="glass-card rounded-[30px] p-6">
                   <h2 className="section-title text-xl font-semibold">Informations système</h2>
