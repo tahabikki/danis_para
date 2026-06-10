@@ -1,7 +1,8 @@
 .next
-node_modules
+node_modules/
 .vercel
 .env
 .env.local
 npm-debug.log*
 public/products/
+superbase/
