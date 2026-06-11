@@ -5,6 +5,8 @@ import { dataMode, getStorageUrl, supabase } from "@/lib/supabase";
 import { AppData, CartItem, Client, Product, Sale, categories as defaultCategories } from "@/lib/types";
 
 const STORAGE_KEY = "danis-parapharmacy-demo";
+const CACHE_KEY = "danis-cache";
+const CACHE_TTL = 30000; // 30s
 
 function migrateProductImageUrl(imageUrl: string) {
   return imageUrl.endsWith(".svg") ? imageUrl.replace(".svg", ".jpeg") : imageUrl;
@@ -57,6 +59,16 @@ function normalizeCloudData(data: {
 
 export async function loadData(): Promise<AppData> {
   if (dataMode === "cloud" && supabase) {
+    if (typeof window !== "undefined") {
+      try {
+        const cached = window.sessionStorage.getItem(CACHE_KEY);
+        if (cached) {
+          const { data, timestamp } = JSON.parse(cached) as { data: AppData; timestamp: number };
+          if (Date.now() - timestamp < CACHE_TTL) return migrateDataImages(data);
+        }
+      } catch { /* ignore */ }
+    }
+
     const [produitsRes, clientsRes, ventesRes, categoriesRes] = await Promise.all([
       supabase.from("produits").select("*").order("nom"),
       supabase.from("clients").select("*").order("nom"),
@@ -68,12 +80,20 @@ export async function loadData(): Promise<AppData> {
     const dbCategories: string[] = (categoriesRes.data ?? []).map((r: { nom: string }) => r.nom);
     const merged = [...new Set([...defaultCategories, ...dbCategories])];
 
-    return normalizeCloudData({
+    const result = normalizeCloudData({
       produits,
       clients: clientsRes.data as Client[] | null,
       ventes: ventesRes.data as Sale[] | null,
       categories: merged,
     });
+
+    if (typeof window !== "undefined") {
+      try {
+        window.sessionStorage.setItem(CACHE_KEY, JSON.stringify({ data: result, timestamp: Date.now() }));
+      } catch { /* ignore */ }
+    }
+
+    return result;
   }
 
   if (typeof window === "undefined") {

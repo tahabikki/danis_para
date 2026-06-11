@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import {
+  ArrowLeft,
   ChartColumnBig,
   ChevronDown,
   Database,
@@ -31,7 +32,7 @@ import { deleteClient, deleteProduct, loadData, processSale, resetLocalData, sav
 import { dataMode } from "@/lib/supabase";
 import { type AppData, type CartItem, type Client, type Product } from "@/lib/types";
 import { cn, computeClientHistory, formatDate, formatMad, isToday } from "@/lib/utils";
-import { SalesChart } from "@/components/sales-chart";
+import { CategorySales } from "@/components/category-sales";
 import { InvoiceReceipt } from "@/components/invoice-receipt";
 
 type ViewKey = "dashboard" | "produits" | "clients" | "categories" | "pos" | "ventes" | "settings";
@@ -108,6 +109,10 @@ export function AppShell() {
   const [savingProduct, setSavingProduct] = useState(false);
   const [saveFeedback, setSaveFeedback] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [produitsTab, setProduitsTab] = useState<"liste" | "nouveau">("liste");
+  const [clientsTab, setClientsTab] = useState<"liste" | "nouveau">("liste");
+  const [venteClientFilter, setVenteClientFilter] = useState("Tous");
+  const [venteDateFilter, setVenteDateFilter] = useState("");
 
   useEffect(() => {
     const session = window.sessionStorage.getItem(SESSION_KEY);
@@ -158,6 +163,18 @@ export function AppShell() {
       return { categorie: cat, count: prods.length, totalStock, totalValue };
     });
   }, [data]);
+
+  const filteredVentes = useMemo(() => {
+    if (!data) return [];
+    return data.ventes.filter((sale) => {
+      if (venteClientFilter !== "Tous" && sale.client_id !== venteClientFilter) return false;
+      if (venteDateFilter) {
+        const saleDate = sale.date.split("T")[0];
+        if (saleDate !== venteDateFilter) return false;
+      }
+      return true;
+    });
+  }, [data, venteClientFilter, venteDateFilter]);
 
   const dashboardStats = useMemo(() => {
     if (!data) return null;
@@ -257,6 +274,7 @@ export function AppShell() {
   function handleEditProduct(product: Product) {
     setProductForm(product);
     setEditingProductId(product.id);
+    setProduitsTab("nouveau");
   }
 
   async function handleDeleteProduct(productId: string) {
@@ -273,6 +291,45 @@ export function AppShell() {
       setProductForm((current) => ({ ...current, image_url: event.target?.result as string }));
     };
     reader.readAsDataURL(file);
+  }
+
+  function handleDownloadVentesPDF() {
+    const printWindow = window.open("", "_blank");
+    if (!printWindow || !data) return;
+    const rows = filteredVentes.map((sale) => {
+      const product = data.produits.find((item) => item.id === sale.produit_id);
+      const client = data.clients.find((item) => item.id === sale.client_id);
+      return `<tr>
+        <td style="padding:8px 12px;border-top:1px solid #e2edec">${product?.nom ?? "Produit"}</td>
+        <td style="padding:8px 12px;border-top:1px solid #e2edec;text-align:center">${sale.quantite}</td>
+        <td style="padding:8px 12px;border-top:1px solid #e2edec">${client ? `${client.nom} (${client.telephone})` : "Sans client"}</td>
+        <td style="padding:8px 12px;border-top:1px solid #e2edec">${new Date(sale.date).toLocaleDateString("fr-FR")}</td>
+        <td style="padding:8px 12px;border-top:1px solid #e2edec;text-align:right;font-weight:600">${formatMad(sale.total)}</td>
+      </tr>`;
+    }).join("");
+    const total = formatMad(filteredVentes.reduce((s, v) => s + v.total, 0));
+    const dateLabel = venteDateFilter ? new Date(venteDateFilter).toLocaleDateString("fr-FR") : "Toutes les dates";
+    const clientLabel = venteClientFilter === "Tous" ? "Tous les clients" : (data.clients.find((c) => c.id === venteClientFilter)?.nom ?? venteClientFilter);
+    printWindow.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Historique des ventes - Dani's Parapharmacy</title><style>
+      body{font-family:Arial,Helvetica,sans-serif;font-size:13px;padding:32px;color:#1a1a1a;max-width:900px;margin:0 auto}
+      h1{font-size:20px;margin:0 0 4px;color:#184c4e}
+      .filters{font-size:12px;color:#666;margin-bottom:20px}
+      table{width:100%;border-collapse:collapse}
+      th{text-align:left;font-size:11px;text-transform:uppercase;color:#666;padding:8px 12px;border-bottom:2px solid #184c4e}
+      td{font-size:13px}
+      .total-row td{border-top:2px solid #184c4e;font-weight:bold;padding-top:10px;font-size:15px;color:#184c4e}
+      .footer{text-align:center;margin-top:32px;font-size:11px;color:#999;border-top:1px dashed #ccc;padding-top:16px}
+    </style></head><body>
+      <h1>Dani&apos;s Parapharmacy</h1>
+      <p style="font-size:12px;color:#666;margin:2px 0 4px">Historique des ventes</p>
+      <div class="filters">${clientLabel} · ${dateLabel} · ${filteredVentes.length} vente${filteredVentes.length !== 1 ? "s" : ""}</div>
+      <table><thead><tr><th>Produit</th><th style="text-align:center">Qté</th><th>Client</th><th>Date</th><th style="text-align:right">Total</th></tr></thead><tbody>${rows}</tbody></table>
+      <table style="margin-top:0"><tr class="total-row"><td colspan="4">Total général</td><td style="text-align:right">${total}</td></tr></table>
+      <div class="footer">Généré par Dani's Parapharmacy — Logiciel de démonstration</div>
+    </body></html>`);
+    printWindow.document.close();
+    printWindow.focus();
+    setTimeout(() => printWindow.print(), 300);
   }
 
   async function handleSaveClient() {
@@ -352,26 +409,24 @@ export function AppShell() {
 
   if (!isLoggedIn) {
     return (
-      <div className="relative flex min-h-screen items-center justify-center overflow-hidden px-4 py-10">
+      <div className="relative flex min-h-dvh items-center justify-center overflow-y-auto px-4 py-4 sm:py-8 lg:py-12">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(254,238,177,0.85),transparent_28%),radial-gradient(circle_at_bottom_right,rgba(36,111,114,0.25),transparent_32%),linear-gradient(135deg,#f8faf8_0%,#edf5f3_100%)]" />
-        <div className="glass-card relative grid w-full max-w-6xl overflow-hidden rounded-[40px] lg:grid-cols-[1.1fr_0.9fr]">
-          <section className="relative p-8 text-white md:p-12" style={{ background: "linear-gradient(160deg, #0f3d40 0%, #246f72 56%, #2d878b 100%)" }}>
+        <div className="glass-card relative grid w-full max-w-6xl overflow-hidden rounded-3xl sm:rounded-[40px] lg:grid-cols-[1.1fr_0.9fr]">
+          <section className="relative p-5 text-white sm:p-8 md:p-12" style={{ background: "linear-gradient(160deg, #0f3d40 0%, #246f72 56%, #2d878b 100%)" }}>
             <div className="absolute inset-0 bg-[radial-gradient(circle_at_10%_10%,rgba(254,238,177,0.22),transparent_26%),radial-gradient(circle_at_90%_20%,rgba(255,255,255,0.12),transparent_20%)]" />
             <div className="relative">
               <div className="flex items-center gap-4">
-                <Image src="/assets/logo/green_logo.jpeg" alt="Logo" width={70} height={70} className="h-18 w-18 rounded-3xl object-cover shadow-2xl" />
+                <Image src="/assets/logo/green_logo.jpeg" alt="Logo" width={70} height={70} className="h-14 w-14 rounded-2xl object-cover shadow-2xl sm:h-18 sm:w-18 sm:rounded-3xl" />
                 <div>
-                  <p className="text-xs uppercase tracking-[0.35em] text-white/70">Back Office</p>
-                  <Image src="/assets/logo/logo_text.png" alt="Dani's Parapharmacy" width={220} height={48} className="mt-2 h-11 w-auto object-contain brightness-0 invert" />
-                </div>
+                  <p className="text-[10px] uppercase tracking-[0.35em] text-white/70 sm:text-xs">Back Office</p>                </div>
               </div>
-              <h1 className="mt-10 max-w-xl text-4xl font-semibold leading-tight">
+              <h1 className="mt-4 max-w-xl text-xl font-semibold leading-tight sm:mt-8 sm:text-2xl lg:mt-10 lg:text-4xl">
                 Espace administrateur de la démo parapharmacie
               </h1>
-              <p className="mt-4 max-w-xl text-base text-white/78">
+              <p className="mt-2 max-w-xl text-sm text-white/78 sm:mt-4 sm:text-base">
                 Connectez-vous pour gérer le stock, enregistrer des ventes, suivre les clients et présenter un vrai logiciel à votre client.
               </p>
-              <div className="mt-10 grid gap-4 sm:grid-cols-3">
+              <div className="mt-4 flex flex-wrap gap-2 sm:mt-8 sm:grid sm:grid-cols-3 sm:gap-4 lg:mt-10">
                 <FeatureChip label="POS complet" />
                 <FeatureChip label="Stock en direct" />
                 <FeatureChip label="Clients & ventes" />
@@ -379,18 +434,18 @@ export function AppShell() {
             </div>
           </section>
 
-          <section className="p-8 md:p-12">
+          <section className="p-5 sm:p-8 md:p-12">
             <div className="mx-auto max-w-md">
               <div className="inline-flex items-center gap-2 rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-[var(--primary-deep)]">
                 <ShieldCheck className="h-4 w-4" />
                 Connexion administrateur
               </div>
-              <h2 className="section-title mt-6 text-3xl font-semibold">Accéder au tableau de gestion</h2>
-              <p className="mt-3 text-sm text-[var(--muted)]">
+              <h2 className="section-title mt-4 text-xl font-semibold sm:mt-6 sm:text-2xl lg:text-3xl">Accéder au tableau de gestion</h2>
+              <p className="mt-2 text-sm text-[var(--muted)] sm:mt-3">
                 Démo simple: pas de sécurité avancée, juste une vraie entrée admin convaincante.
               </p>
 
-              <div className="mt-8 space-y-4">
+              <div className="mt-4 space-y-3 sm:mt-8 sm:space-y-4">
                 <Input label="Email" value={loginEmail} onChange={setLoginEmail} />
                 <Input label="Mot de passe" type="password" value={loginPassword} onChange={setLoginPassword} />
                 {loginError ? (
@@ -401,13 +456,13 @@ export function AppShell() {
                 <button
                   type="button"
                   onClick={handleLogin}
-                  className="w-full cursor-pointer rounded-2xl bg-[var(--primary)] px-4 py-3 font-semibold text-white transition hover:bg-[var(--primary-deep)]"
+                  className="w-full cursor-pointer rounded-2xl bg-[var(--primary)] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[var(--primary-deep)] sm:py-3 sm:text-base"
                 >
                   Se connecter
                 </button>
               </div>
 
-              <div className="mt-8 rounded-[28px] border border-[var(--border)] bg-white/80 p-5">
+              <div className="mt-4 rounded-[28px] border border-[var(--border)] bg-white/80 p-5 sm:mt-8">
                 <p className="text-sm font-semibold text-[var(--primary-deep)]">Compte de démonstration</p>
                 <p className="mt-3 text-sm text-[var(--muted)]">Email: {DEMO_ADMIN.email}</p>
                 <p className="mt-1 text-sm text-[var(--muted)]">Mot de passe: {DEMO_ADMIN.password}</p>
@@ -479,7 +534,7 @@ export function AppShell() {
         </aside>
 
         {/* ── Main content area ── */}
-        <main className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto py-3 md:gap-4 md:py-6" style={{ scrollbarGutter: "stable" }}>
+        <main className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 py-3 sm:px-6 md:gap-4 md:px-8 md:py-6">
           {/* ── Mobile top navbar (< lg) ── */}
           <div className="flex items-center justify-between rounded-[34px] bg-white p-3 shadow-sm lg:hidden">
             <button
@@ -632,7 +687,7 @@ export function AppShell() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+              <div className="grid grid-cols-2 gap-3 md:grid-cols-2 xl:grid-cols-4 md:gap-4">
                 <StatCard title="Produits" value={dashboardStats.totalProducts.toString()} subtitle="Références actives" />
                 <StatCard title="Stock total" value={dashboardStats.totalStock.toString()} subtitle="Unités en rayon" />
                 <StatCard title="Ventes du jour" value={formatMad(dashboardStats.dailySales)} subtitle="Chiffre d'affaires" />
@@ -665,10 +720,12 @@ export function AppShell() {
                     <div key={item.produit?.id} className="group flex items-center gap-4 rounded-[26px] border border-[var(--border)] bg-white/75 p-4 transition-all hover:-translate-y-0.5 hover:border-[var(--primary)]/20 hover:shadow-md">
                       <div className="relative">
                         <img
-                          src={item.produit?.image_url ?? "/products/creme-hydratante.jpeg"}
+                          loading="lazy" decoding="async"
+                          src={item.produit?.image_url ?? "/assets/logo/green_logo.jpeg"}
                           alt={item.produit?.nom ?? ""}
                           width={64}
                           height={64}
+                          onError={(e) => { (e.target as HTMLImageElement).src = "/assets/logo/green_logo.jpeg" }}
                           className="h-16 w-16 rounded-2xl border border-[var(--border)] bg-white object-contain p-2 transition-all group-hover:scale-105"
                         />
                         <div className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-[var(--primary)] text-[10px] font-bold text-white shadow-sm">
@@ -699,12 +756,12 @@ export function AppShell() {
                     <WalletCards className="h-5 w-5 text-[var(--primary)]" />
                   </div>
                   <div>
-                    <h2 className="section-title text-xl font-semibold">Tendance des ventes</h2>
-                    <p className="mt-0.5 text-sm text-[var(--muted)]">Évolution mensuelle du chiffre d&apos;affaires.</p>
+                    <h2 className="section-title text-xl font-semibold">Ventes par catégorie</h2>
+                    <p className="mt-0.5 text-sm text-[var(--muted)]">Répartition du chiffre d&apos;affaires.</p>
                   </div>
                 </div>
                 <div className="mt-4">
-                  <SalesChart ventes={data.ventes} produits={data.produits} />
+                  <CategorySales ventes={data.ventes} produits={data.produits} />
                 </div>
               </div>
 
@@ -749,44 +806,59 @@ export function AppShell() {
           )}
 
           {view === "produits" && (
-            <section className="grid grid-cols-1 gap-4 xl:grid-cols-[1.35fr_0.85fr]">
-              <div className="rounded-[30px] bg-white p-6 shadow-sm">
-                <div className="flex flex-wrap items-end justify-between gap-4">
-                  <div className="flex items-center gap-5">
-                    <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-[var(--accent)] to-[var(--primary)] text-white shadow-lg shadow-[var(--primary)]/20">
-                      <Package className="h-7 w-7" />
+            <section className="space-y-4">
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setProduitsTab("liste")}
+                  className={cn(
+                    "flex flex-1 items-center justify-center gap-1.5 rounded-2xl px-3 py-2 text-xs font-semibold transition-all md:gap-2 md:px-5 md:py-2.5 md:text-sm",
+                    produitsTab === "liste"
+                      ? "bg-[var(--primary)] text-white shadow-md"
+                      : "border border-[var(--border)] bg-white text-[var(--primary-deep)] hover:border-[var(--primary)]/30 hover:bg-[#f5fafa]"
+                  )}
+                >
+                  <Package className="h-3.5 w-3.5 md:h-4 md:w-4" />
+                  <span className="truncate">Tous les produits</span>
+                  <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-white/20 px-1.5 text-[11px] font-bold">{filteredProducts.length}</span>
+                </button>
+                <button
+                  onClick={() => { setProduitsTab("nouveau"); setProductForm(emptyProduct); setEditingProductId(null); }}
+                  className={cn(
+                    "flex flex-1 items-center justify-center gap-1.5 rounded-2xl px-3 py-2 text-xs font-semibold transition-all md:gap-2 md:px-5 md:py-2.5 md:text-sm",
+                    produitsTab === "nouveau"
+                      ? "bg-[var(--primary)] text-white shadow-md"
+                      : "border border-[var(--border)] bg-white text-[var(--primary-deep)] hover:border-[var(--primary)]/30 hover:bg-[#f5fafa]"
+                  )}
+                >
+                  <Plus className="h-3.5 w-3.5 md:h-4 md:w-4" />
+                  {editingProductId ? "Modifier produit" : "Nouveau produit"}
+                </button>
+              </div>
+
+              {produitsTab === "liste" && (
+                <div className="rounded-[30px] bg-white p-4 shadow-sm md:p-6">
+                  <div className="flex items-center gap-4">
+                    <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-[var(--accent)] to-[var(--primary)] text-white shadow-lg shadow-[var(--primary)]/20 md:h-16 md:w-16">
+                      <Package className="h-6 w-6 md:h-7 md:w-7" />
                     </div>
-                    <div>
-                      <h2 className="text-2xl font-bold tracking-tight text-[var(--primary-deep)]">Tous les produits</h2>
+                    <div className="min-w-0">
+                      <h2 className="text-xl font-bold tracking-tight text-[var(--primary-deep)] md:text-2xl">Tous les produits</h2>
                       <div className="mt-1 flex items-center gap-2">
-                        <span className="inline-flex items-center gap-1.5 rounded-full bg-[var(--accent)] px-3 py-0.5 text-sm font-semibold text-[var(--primary)]">
+                        <span className="inline-flex items-center gap-1.5 rounded-full bg-[var(--accent)] px-3 py-0.5 text-xs font-semibold text-[var(--primary)] md:text-sm">
                           {filteredProducts.length} produit{filteredProducts.length !== 1 ? "s" : ""}
                         </span>
-                        <span className="text-sm text-[var(--muted)]">— cliquez sur un produit pour l&apos;ajouter au panier</span>
+                        <span className="hidden text-sm text-[var(--muted)] sm:inline">— cliquez sur un produit pour l&apos;ajouter au panier</span>
                       </div>
                     </div>
                   </div>
-                  <div className="flex items-center gap-3">
-                    <div className="group relative">
-                      <select
-                        value={categoryFilter}
-                        onChange={(e) => setCategoryFilter(e.target.value)}
-                        className="appearance-none cursor-pointer rounded-2xl border border-[var(--border)] bg-white/80 pl-4 pr-10 py-3.5 text-sm font-medium text-[var(--primary-deep)] outline-none transition-all focus:border-[var(--primary)] focus:bg-white focus:shadow-[0_0_0_4px_var(--accent)] hover:border-[var(--primary)]/40"
-                      >
-                        <option value="Toutes">Toutes les catégories</option>
-                        {data?.categories.map((cat) => (
-                          <option key={cat} value={cat}>{cat}</option>
-                        ))}
-                      </select>
-                      <Layers className="pointer-events-none absolute right-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--muted)] transition-colors group-hover:text-[var(--primary)]" />
-                    </div>
-                    <div className="relative">
+                  <div className="mt-4 flex flex-col gap-3 md:flex-row md:items-center">
+                    <div className="relative order-1 md:order-none md:flex-1">
                       <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--muted)]" />
                       <input
                         value={query}
                         onChange={(e) => setQuery(e.target.value)}
-                        placeholder="Rechercher..."
-                        className="w-48 rounded-2xl border border-[var(--border)] bg-white/80 py-3.5 pl-11 pr-4 text-sm text-[var(--primary-deep)] outline-none transition-all placeholder:text-[var(--muted)] focus:w-72 focus:border-[var(--primary)] focus:bg-white focus:shadow-[0_0_0_4px_var(--accent)] md:w-56"
+                        placeholder="Rechercher un produit..."
+                        className="w-full rounded-2xl border border-[var(--border)] bg-white/80 py-3.5 pl-11 pr-10 text-sm text-[var(--primary-deep)] outline-none transition-all placeholder:text-[var(--muted)] focus:border-[var(--primary)] focus:bg-white focus:shadow-[0_0_0_4px_var(--accent)] md:w-56"
                       />
                       {query && (
                         <button
@@ -798,81 +870,99 @@ export function AppShell() {
                         </button>
                       )}
                     </div>
+                    <div className="group relative order-2 md:order-none md:min-w-[220px]">
+                      <Layers className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--muted)] transition-colors group-hover:text-[var(--primary)]" />
+                      <select
+                        value={categoryFilter}
+                        onChange={(e) => setCategoryFilter(e.target.value)}
+                        className="w-full appearance-none cursor-pointer rounded-2xl border border-[var(--border)] bg-white/80 py-3.5 pl-11 pr-10 text-sm font-medium text-[var(--primary-deep)] outline-none transition-all focus:border-[var(--primary)] focus:bg-white focus:shadow-[0_0_0_4px_var(--accent)] hover:border-[var(--primary)]/40"
+                      >
+                        <option value="Toutes">Toutes les catégories</option>
+                        {data?.categories.map((cat) => (
+                          <option key={cat} value={cat}>{cat}</option>
+                        ))}
+                      </select>
+                      <ChevronDown className="pointer-events-none absolute right-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--muted)] transition-colors group-hover:text-[var(--primary)]" />
+                    </div>
                   </div>
-                </div>
-                <div className="mt-5 grid grid-cols-1 gap-5 md:grid-cols-2 2xl:grid-cols-3">
-                  {filteredProducts.map((product) => (
-                    <article key={product.id} className="group rounded-[28px] border border-[var(--border)] bg-white/75 transition hover:shadow-lg">
-                      <div className="relative overflow-hidden rounded-t-[28px] bg-[linear-gradient(180deg,#f8fbfa_0%,#f0f6f3_100%)]">
-                        <img src={product.image_url} alt={product.nom} width={440} height={280} className="h-48 w-full object-contain p-6 transition duration-300 group-hover:scale-105" />
-                        <span className="absolute left-3 top-3 rounded-full bg-white/90 px-3 py-1 text-xs font-semibold text-[var(--primary-deep)] shadow-sm backdrop-blur-sm">
-                          {product.categorie}
-                        </span>
-                        <div className="absolute right-3 top-3 flex gap-1.5 opacity-0 transition-opacity group-hover:opacity-100">
-                          <button
-                            type="button"
-                            onClick={() => handleEditProduct(product)}
-                            className="cursor-pointer rounded-xl border border-[var(--border)] bg-white p-2 text-[var(--primary)] shadow-sm transition hover:bg-[var(--accent)]"
-                            title="Modifier"
-                          >
-                            <Pencil className="h-3.5 w-3.5" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteProduct(product.id)}
-                            className="cursor-pointer rounded-xl border border-[var(--border)] bg-white p-2 text-[var(--danger)] shadow-sm transition hover:bg-[#fff0ef]"
-                            title="Supprimer"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
-                        </div>
-                      </div>
-                      <div className="p-4">
-                        <div className="flex items-start justify-between gap-3">
-                          <h3 className="text-lg font-semibold text-[var(--primary-deep)]">{product.nom}</h3>
-                          <span className="shrink-0 text-base font-bold text-[var(--primary)]">{formatMad(product.prix)}</span>
-                        </div>
-                        <p className="mt-1.5 line-clamp-2 text-sm text-[var(--muted)]">{product.description}</p>
-                        <div className="mt-4 flex items-center justify-between gap-2">
-                          <span className={cn(
-                            "rounded-full px-3 py-1 text-xs font-semibold",
-                            product.stock <= 5
-                              ? "bg-[#fff0ef] text-[var(--danger)]"
-                              : product.stock <= 15
-                                ? "bg-[#fff8e5] text-[#b8860b]"
-                                : "bg-[#edf5f5] text-[var(--primary)]",
-                          )}>
-                              {product.stock <= 5 ? "Stock critique" : product.stock <= 15 ? "Stock moyen" : "En stock"}: {product.stock}
+                  <div className="mt-5 grid grid-cols-1 gap-5 md:grid-cols-2 2xl:grid-cols-3">
+                    {filteredProducts.map((product, idx) => (
+                      <article key={product.id} className="group rounded-[28px] border border-[var(--border)] bg-white/75 transition hover:shadow-lg">
+                        <div className="relative overflow-hidden rounded-t-[28px] bg-[linear-gradient(180deg,#f8fbfa_0%,#f0f6f3_100%)]">
+                          {idx < 4 ? (
+                            <img fetchPriority="high" src={product.image_url} alt={product.nom} width={440} height={280} onError={(e) => { (e.target as HTMLImageElement).src = "/assets/logo/green_logo.jpeg" }} className="h-48 w-full object-contain p-6 transition duration-300 group-hover:scale-105" />
+                          ) : (
+                            <img loading="lazy" decoding="async" src={product.image_url} alt={product.nom} width={440} height={280} onError={(e) => { (e.target as HTMLImageElement).src = "/assets/logo/green_logo.jpeg" }} className="h-48 w-full object-contain p-6 transition duration-300 group-hover:scale-105" />
+                          )}
+                          <span className="absolute left-3 top-3 rounded-full bg-white/90 px-3 py-1 text-xs font-semibold text-[var(--primary-deep)] shadow-sm backdrop-blur-sm">
+                            {product.categorie}
                           </span>
-                          {product.date_expiration && new Date(product.date_expiration) <= new Date(Date.now() + 90 * 24 * 60 * 60 * 1000) && (
+                          <div className="absolute right-3 top-3 flex gap-1.5 opacity-0 transition-opacity group-hover:opacity-100">
+                            <button
+                              type="button"
+                              onClick={() => handleEditProduct(product)}
+                              className="cursor-pointer rounded-xl border border-[var(--border)] bg-white p-2 text-[var(--primary)] shadow-sm transition hover:bg-[var(--accent)]"
+                              title="Modifier"
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteProduct(product.id)}
+                              className="cursor-pointer rounded-xl border border-[var(--border)] bg-white p-2 text-[var(--danger)] shadow-sm transition hover:bg-[#fff0ef]"
+                              title="Supprimer"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                        <div className="p-4">
+                          <div className="flex items-start justify-between gap-3">
+                            <h3 className="text-lg font-semibold text-[var(--primary-deep)]">{product.nom}</h3>
+                            <span className="shrink-0 text-base font-bold text-[var(--primary)]">{formatMad(product.prix)}</span>
+                          </div>
+                          <p className="mt-1.5 line-clamp-2 text-sm text-[var(--muted)]">{product.description}</p>
+                          <div className="mt-4 flex items-center justify-between gap-2">
                             <span className={cn(
                               "rounded-full px-3 py-1 text-xs font-semibold",
-                              new Date(product.date_expiration) < new Date() ? "bg-[#fff0ef] text-[var(--danger)]" : "bg-[#fff8e5] text-[#b8860b]",
+                              product.stock <= 5
+                                ? "bg-[#fff0ef] text-[var(--danger)]"
+                                : product.stock <= 15
+                                  ? "bg-[#fff8e5] text-[#b8860b]"
+                                  : "bg-[#edf5f5] text-[var(--primary)]",
                             )}>
-                              {new Date(product.date_expiration) < new Date() ? "Périmé" : `Exp. ${new Date(product.date_expiration).toLocaleDateString("fr-FR")}`}
+                                {product.stock <= 5 ? "Stock critique" : product.stock <= 15 ? "Stock moyen" : "En stock"}: {product.stock}
                             </span>
-                          )}
-                          <button
-                            type="button"
-                            onClick={() => addToCart(product)}
-                            className="cursor-pointer rounded-xl bg-[var(--primary)] p-2 text-white transition hover:bg-[var(--primary-deep)]"
-                            title="Ajouter au panier"
-                          >
-                            <ShoppingCart className="h-4 w-4" />
-                          </button>
+                            {product.date_expiration && new Date(product.date_expiration) <= new Date(Date.now() + 90 * 24 * 60 * 60 * 1000) && (
+                              <span className={cn(
+                                "rounded-full px-3 py-1 text-xs font-semibold",
+                                new Date(product.date_expiration) < new Date() ? "bg-[#fff0ef] text-[var(--danger)]" : "bg-[#fff8e5] text-[#b8860b]",
+                              )}>
+                                {new Date(product.date_expiration) < new Date() ? "Périmé" : `Exp. ${new Date(product.date_expiration).toLocaleDateString("fr-FR")}`}
+                              </span>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => addToCart(product)}
+                              className="cursor-pointer rounded-xl bg-[var(--primary)] p-2 text-white transition hover:bg-[var(--primary-deep)]"
+                              title="Ajouter au panier"
+                            >
+                              <ShoppingCart className="h-4 w-4" />
+                            </button>
+                          </div>
                         </div>
+                      </article>
+                    ))}
+                    {filteredProducts.length === 0 && (
+                      <div className="col-span-full rounded-3xl border border-dashed border-[var(--border)] bg-white/55 p-12 text-center text-sm text-[var(--muted)]">
+                        Aucun produit trouvé. Essayez un autre mot-clé ou ajoutez un nouveau produit.
                       </div>
-                    </article>
-                  ))}
-                  {filteredProducts.length === 0 && (
-                    <div className="col-span-full rounded-3xl border border-dashed border-[var(--border)] bg-white/55 p-12 text-center text-sm text-[var(--muted)]">
-                      Aucun produit trouvé. Essayez un autre mot-clé ou ajoutez un nouveau produit.
-                    </div>
-                  )}
+                    )}
+                  </div>
                 </div>
-              </div>
+              )}
 
-              <div className="space-y-4">
+              {produitsTab === "nouveau" && (
                 <div className="glass-card rounded-[30px] p-6">
                   <div
                     className="-mx-6 -mt-6 mb-6 flex items-center justify-between rounded-t-[30px] px-6 py-4 text-white"
@@ -898,7 +988,7 @@ export function AppShell() {
                   <div className="mt-5 space-y-4">
                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                       <Input label="Nom" value={productForm.nom} onChange={(value) => setProductForm((current) => ({ ...current, nom: value }))} />
-                      <Input label="Prix (MAD)" type="number" value={String(productForm.prix)} onChange={(value) => setProductForm((current) => ({ ...current, prix: Number(value) }))} />
+                      <Input label="Prix (€)" type="number" value={String(productForm.prix)} onChange={(value) => setProductForm((current) => ({ ...current, prix: Number(value) }))} />
                     </div>
                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                       <label className="block text-sm font-medium text-[var(--primary-deep)]">
@@ -1007,177 +1097,153 @@ export function AppShell() {
                     </button>
                   </div>
                 </div>
+              )}
 
-                <div className="glass-card rounded-[30px] p-6">
-                  <div
-                    className="-mx-6 -mt-6 mb-6 rounded-t-[30px] px-6 py-4 text-white"
-                    style={{ backgroundColor: "#246f72" }}
-                  >
-                    <h2 className="text-lg font-bold">Aperçu rapide</h2>
-                  </div>
-                  <div className="mt-4 space-y-3">
-                    <div className="flex items-center justify-between rounded-2xl bg-[#edf5f5] px-4 py-3">
-                      <span className="text-sm text-[var(--primary-deep)]">Total produits</span>
-                      <span className="font-semibold text-[var(--primary)]">{data.produits.length}</span>
-                    </div>
-                    <div className="flex items-center justify-between rounded-2xl bg-[#edf5f5] px-4 py-3">
-                      <span className="text-sm text-[var(--primary-deep)]">Stock total</span>
-                      <span className="font-semibold text-[var(--primary)]">{data.produits.reduce((s, p) => s + p.stock, 0)}</span>
-                    </div>
-                    <div className="flex items-center justify-between rounded-2xl bg-[#edf5f5] px-4 py-3">
-                      <span className="text-sm text-[var(--primary-deep)]">Alertes stock</span>
-                      <span className="font-semibold text-[var(--danger)]">{data.produits.filter((p) => p.stock <= 5).length}</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
+
             </section>
           )}
 
           {view === "categories" && (
             <section className="space-y-4">
-
-              <div className="overflow-hidden rounded-[30px] text-white" style={{ background: "linear-gradient(135deg, #1a5c5f 0%, #2d878b 50%, #3a9fa3 100%)" }}>
-                <div className="relative px-6 py-5">
-                  <div className="absolute inset-0 bg-[radial-gradient(circle_at_80%_20%,rgba(254,238,177,0.18),transparent_30%),radial-gradient(circle_at_20%_80%,rgba(255,255,255,0.08),transparent_25%)]" />
-                  <div className="relative flex items-center justify-between">
-                    <div className="flex items-center gap-4">
-                      <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-white/20 backdrop-blur-sm">
-                        <Layers className="h-7 w-7" />
-                      </div>
-                      <div>
-                        <p className="text-sm font-medium uppercase tracking-[0.25em] text-white/75">Catalogue</p>
-                        <h2 className="mt-1 text-2xl font-bold">Catégories</h2>
-                        <p className="mt-1 text-sm text-white/70">
-                          {data.categories.length} catégorie{data.categories.length !== 1 ? "s" : ""} · {data.produits.length} produits
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <input
-                        value={newCategoryName}
-                        onChange={(e) => setNewCategoryName(e.target.value.toUpperCase())}
-                        onKeyDown={async (e) => {
-                          if (e.key === "Enter" && newCategoryName.trim()) {
-                            const next = await saveCategory(newCategoryName, data);
-                            setData(next);
-                            setNewCategoryName("");
-                          }
-                        }}
-                        placeholder="Nouvelle catégorie..."
-                        className="w-40 rounded-2xl bg-white/15 px-4 py-2.5 text-sm text-white outline-none placeholder:text-white/50 backdrop-blur-sm transition focus:w-52 focus:bg-white/25"
-                      />
-                      <button
-                        type="button"
-                        disabled={!newCategoryName.trim()}
-                        onClick={async () => {
-                          if (!newCategoryName.trim()) return;
-                          const next = await saveCategory(newCategoryName, data);
-                          setData(next);
-                          setNewCategoryName("");
-                        }}
-                        className="flex cursor-pointer items-center gap-1.5 rounded-2xl bg-white/20 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-white/30 disabled:cursor-not-allowed disabled:opacity-40 backdrop-blur-sm"
-                      >
-                        <Plus className="h-4 w-4" />
-                        Ajouter
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                {categoryStats.map((cat, idx) => {
-                  const accent = CATEGORY_COLORS[idx % CATEGORY_COLORS.length];
-                  return (
-                    <div
-                      key={cat.categorie}
-                      className={cn(
-                        "group relative cursor-pointer overflow-hidden rounded-[28px] border-2 bg-white p-5 transition-all hover:-translate-y-1 hover:shadow-xl",
-                        selectedCategory === cat.categorie
-                          ? "border-[var(--primary)] shadow-lg"
-                          : "border-transparent shadow-sm",
-                      )}
-                      onClick={() => setSelectedCategory(selectedCategory === cat.categorie ? null : cat.categorie)}
-                    >
-                      <div className="absolute -right-8 -top-8 h-24 w-24 rounded-full opacity-10 transition-all group-hover:scale-150" style={{ backgroundColor: accent }} />
-                      <div className="relative">
-                        <div className="flex items-start justify-between">
-                          <div className="flex h-12 w-12 items-center justify-center rounded-2xl text-white" style={{ backgroundColor: accent }}>
-                            <Layers className="h-6 w-6" />
+              {!selectedCategory ? (
+                <>
+                  <div className="overflow-hidden rounded-[30px] text-white" style={{ background: "linear-gradient(135deg, #1a5c5f 0%, #2d878b 50%, #3a9fa3 100%)" }}>
+                    <div className="relative px-6 py-5">
+                      <div className="absolute inset-0 bg-[radial-gradient(circle_at_80%_20%,rgba(254,238,177,0.18),transparent_30%),radial-gradient(circle_at_20%_80%,rgba(255,255,255,0.08),transparent_25%)]" />
+                      <div className="relative flex flex-wrap items-center gap-3 sm:flex-nowrap sm:justify-between">
+                        <div className="flex items-center gap-4">
+                          <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-white/20 backdrop-blur-sm">
+                            <Layers className="h-7 w-7" />
                           </div>
+                          <div>
+                            <p className="text-sm font-medium uppercase tracking-[0.25em] text-white/75">Catalogue</p>
+                            <h2 className="mt-1 text-2xl font-bold">Catégories</h2>
+                            <p className="mt-1 text-sm text-white/70">
+                              {data.categories.length} catégorie{data.categories.length !== 1 ? "s" : ""} · {data.produits.length} produits
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <input
+                            value={newCategoryName}
+                            onChange={(e) => setNewCategoryName(e.target.value.toUpperCase())}
+                            onKeyDown={async (e) => {
+                              if (e.key === "Enter" && newCategoryName.trim()) {
+                                const next = await saveCategory(newCategoryName, data);
+                                setData(next);
+                                setNewCategoryName("");
+                              }
+                            }}
+                            placeholder="Nouvelle catégorie..."
+                            className="w-36 rounded-2xl bg-white/15 px-4 py-2.5 text-sm text-white outline-none placeholder:text-white/50 backdrop-blur-sm transition focus:w-44 focus:bg-white/25 sm:w-40 sm:focus:w-52"
+                          />
                           <button
                             type="button"
-                            onClick={async (e) => {
-                              e.stopPropagation();
-                              const next = await deleteCategory(cat.categorie, data);
+                            disabled={!newCategoryName.trim()}
+                            onClick={async () => {
+                              if (!newCategoryName.trim()) return;
+                              const next = await saveCategory(newCategoryName, data);
                               setData(next);
-                              if (selectedCategory === cat.categorie) setSelectedCategory(null);
+                              setNewCategoryName("");
                             }}
-                            className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-xl border border-[var(--border)] bg-white text-[var(--danger)] opacity-0 transition hover:bg-[#fff0ef] group-hover:opacity-100"
+                            className="flex cursor-pointer items-center gap-1.5 rounded-2xl bg-white/20 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-white/30 disabled:cursor-not-allowed disabled:opacity-40 backdrop-blur-sm"
                           >
-                            <Trash2 className="h-3.5 w-3.5" />
+                            <Plus className="h-4 w-4" />
+                            Ajouter
                           </button>
                         </div>
-                        <h3 className="mt-4 text-lg font-bold text-[var(--primary-deep)]">{cat.categorie}</h3>
-                        <div className="mt-3 flex items-center gap-3">
-                          <span className="inline-flex items-center gap-1 rounded-full px-3 py-0.5 text-xs font-semibold" style={{ backgroundColor: accent + "18", color: accent }}>
-                            {cat.count} produit{cat.count !== 1 ? "s" : ""}
-                          </span>
-                          <span className="text-xs text-[var(--muted)]">{cat.totalStock} unités</span>
-                        </div>
-                        <div className="mt-4">
-                          <div className="flex items-center justify-between text-xs">
-                            <span className="text-[var(--muted)]">Stock</span>
-                            <span className="font-semibold text-[var(--primary)]">{formatMad(cat.totalValue)}</span>
-                          </div>
-                          <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-[#edf5f5]">
-                            <div
-                              className="h-full rounded-full transition-all duration-500"
-                              style={{ width: `${data && data.produits.length ? (cat.count / data.produits.length) * 100 : 0}%`, backgroundColor: accent }}
-                            />
-                          </div>
-                        </div>
-                        <div className="mt-4 flex items-center justify-between border-t border-[var(--border)] pt-3 text-xs text-[var(--muted)]">
-                          <span>Prix moyen</span>
-                          <span className="font-semibold text-[var(--primary-deep)]">{formatMad(Math.round(cat.totalValue / cat.count))}</span>
-                        </div>
                       </div>
                     </div>
-                  );
-                })}
-              </div>
-
-              {selectedCategory && (
-                <div className="rounded-[30px] bg-white p-6 shadow-sm">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className="flex h-12 w-12 items-center justify-center rounded-2xl" style={{ backgroundColor: (CATEGORY_COLORS[categoryStats.findIndex((c) => c.categorie === selectedCategory) % CATEGORY_COLORS.length] || "#246f72") + "18" }}>
-                        <Layers className="h-6 w-6 text-[var(--primary)]" />
-                      </div>
-                      <div>
-                        <h2 className="section-title text-xl font-bold">{selectedCategory}</h2>
-                        <p className="mt-0.5 text-sm text-[var(--muted)]">
-                          {data.produits.filter((p) => p.categorie === selectedCategory).length} produit
-                          {data.produits.filter((p) => p.categorie === selectedCategory).length !== 1 ? "s" : ""}
-                        </p>
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setSelectedCategory(null)}
-                      className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-xl border border-[var(--border)] bg-white transition hover:bg-[#f5f5f5]"
-                    >
-                      <X className="h-4 w-4 text-[var(--muted)]" />
-                    </button>
                   </div>
-                  <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                    {categoryStats.map((cat, idx) => {
+                      const accent = CATEGORY_COLORS[idx % CATEGORY_COLORS.length];
+                      return (
+                        <div
+                          key={cat.categorie}
+                          className="group relative cursor-pointer overflow-hidden rounded-[28px] border-2 bg-white p-5 transition-all hover:-translate-y-1 hover:shadow-xl border-transparent shadow-sm"
+                          onClick={() => setSelectedCategory(cat.categorie)}
+                        >
+                          <div className="absolute -right-8 -top-8 h-24 w-24 rounded-full opacity-10 transition-all group-hover:scale-150" style={{ backgroundColor: accent }} />
+                          <div className="relative">
+                            <div className="flex items-start justify-between">
+                              <div className="flex h-12 w-12 items-center justify-center rounded-2xl text-white" style={{ backgroundColor: accent }}>
+                                <Layers className="h-6 w-6" />
+                              </div>
+                              <button
+                                type="button"
+                                onClick={async (e) => {
+                                  e.stopPropagation();
+                                  const next = await deleteCategory(cat.categorie, data);
+                                  setData(next);
+                                }}
+                                className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-xl border border-[var(--border)] bg-white text-[var(--danger)] opacity-0 transition hover:bg-[#fff0ef] group-hover:opacity-100"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                            <h3 className="mt-4 text-lg font-bold text-[var(--primary-deep)]">{cat.categorie}</h3>
+                            <div className="mt-3 flex items-center gap-3">
+                              <span className="inline-flex items-center gap-1 rounded-full px-3 py-0.5 text-xs font-semibold" style={{ backgroundColor: accent + "18", color: accent }}>
+                                {cat.count} produit{cat.count !== 1 ? "s" : ""}
+                              </span>
+                              <span className="text-xs text-[var(--muted)]">{cat.totalStock} unités</span>
+                            </div>
+                            <div className="mt-4">
+                              <div className="flex items-center justify-between text-xs">
+                                <span className="text-[var(--muted)]">Stock</span>
+                                <span className="font-semibold text-[var(--primary)]">{formatMad(cat.totalValue)}</span>
+                              </div>
+                              <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-[#edf5f5]">
+                                <div
+                                  className="h-full rounded-full transition-all duration-500"
+                                  style={{ width: `${data && data.produits.length ? (cat.count / data.produits.length) * 100 : 0}%`, backgroundColor: accent }}
+                                />
+                              </div>
+                            </div>
+                            <div className="mt-4 flex items-center justify-between border-t border-[var(--border)] pt-3 text-xs text-[var(--muted)]">
+                              <span>Prix moyen</span>
+                              <span className="font-semibold text-[var(--primary-deep)]">{formatMad(Math.round(cat.totalValue / cat.count))}</span>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="overflow-hidden rounded-[30px] text-white" style={{ background: "linear-gradient(135deg, #1a5c5f 0%, #2d878b 50%, #3a9fa3 100%)" }}>
+                    <div className="relative px-6 py-5">
+                      <div className="absolute inset-0 bg-[radial-gradient(circle_at_80%_20%,rgba(254,238,177,0.18),transparent_30%),radial-gradient(circle_at_20%_80%,rgba(255,255,255,0.08),transparent_25%)]" />
+                      <div className="relative flex items-center gap-4">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedCategory(null)}
+                          className="flex h-10 w-10 cursor-pointer items-center justify-center rounded-2xl bg-white/20 text-white backdrop-blur-sm transition hover:bg-white/30"
+                        >
+                          <ArrowLeft className="h-5 w-5" />
+                        </button>
+                        <div>
+                          <p className="text-sm font-medium uppercase tracking-[0.25em] text-white/75">Catégorie</p>
+                          <h2 className="mt-1 text-2xl font-bold">{selectedCategory}</h2>
+                          <p className="mt-1 text-sm text-white/70">
+                            {data.produits.filter((p) => p.categorie === selectedCategory).length} produit
+                            {data.produits.filter((p) => p.categorie === selectedCategory).length !== 1 ? "s" : ""}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
                     {data.produits
                       .filter((p) => p.categorie === selectedCategory)
                       .map((product) => (
                         <div key={product.id} className="group/card flex items-center gap-3 rounded-2xl border border-[var(--border)] bg-white/75 p-3 transition-all hover:border-[var(--primary)]/20 hover:shadow-md">
                           <div className="relative shrink-0">
-                            <img src={product.image_url} alt={product.nom} width={48} height={48} className="h-12 w-12 rounded-xl bg-white object-contain p-1 transition-all group-hover/card:scale-105" />
+                            <img loading="lazy" decoding="async" src={product.image_url} alt={product.nom} width={48} height={48} onError={(e) => { (e.target as HTMLImageElement).src = "/assets/logo/green_logo.jpeg" }} className="h-12 w-12 rounded-xl bg-white object-contain p-1 transition-all group-hover/card:scale-105" />
                             {product.stock <= 5 && (
                               <div className="absolute -right-1 -top-1 h-3 w-3 rounded-full border-2 border-white bg-[var(--danger)]" />
                             )}
@@ -1214,7 +1280,8 @@ export function AppShell() {
                       </p>
                     )}
                   </div>
-                  <div className="mt-5">
+
+                  <div className="rounded-[30px] bg-white p-6 shadow-sm">
                     <button
                       type="button"
                       onClick={() => setCategoryAddOpen(!categoryAddOpen)}
@@ -1261,142 +1328,139 @@ export function AppShell() {
                       </div>
                     )}
                   </div>
-                </div>
+                </>
               )}
-
             </section>
           )}
 
           {view === "clients" && (
-            <section className="grid grid-cols-1 gap-4 xl:grid-cols-[0.95fr_1.05fr]">
-              <div className="glass-card rounded-[30px] p-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h2 className="section-title text-xl font-semibold">Clients</h2>
-                    <p className="mt-1 text-sm text-[var(--muted)]">
-                      Recherche par téléphone et total d&apos;achats.
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => { setClientForm(emptyClient); setEditingClientId("new"); setSelectedClientId(""); }}
-                    className="cursor-pointer rounded-2xl bg-[var(--primary)] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[var(--primary-deep)]"
-                  >
-                    <UserPlus className="h-4 w-4" />
-                  </button>
-                </div>
-                <label className="mt-5 flex items-center gap-2 rounded-2xl border border-[var(--border)] bg-white px-4 py-3">
-                  <Search className="h-4 w-4 text-[var(--muted)]" />
-                  <input
-                    value={clientSearch}
-                    onChange={(e) => setClientSearch(e.target.value)}
-                    placeholder="Rechercher par nom ou téléphone"
-                    className="w-full border-0 bg-transparent outline-none"
-                  />
-                </label>
-                <div className="mt-5 space-y-3">
-                  {filteredClients.map((client) => (
-                    <div
-                      key={client.id}
-                      className={cn(
-                        "flex items-center justify-between rounded-3xl border px-4 py-4 transition",
-                        selectedClientId === client.id
-                          ? "border-[var(--primary)] bg-[#eef6f5]"
-                          : "border-[var(--border)] bg-white/75",
-                      )}
-                    >
-                      <button
-                        type="button"
-                        onClick={() => { setSelectedClientId(client.id); setEditingClientId(null); }}
-                        className="flex flex-1 cursor-pointer items-center justify-between gap-4 text-left"
-                      >
-                        <div>
-                          <p className="font-semibold text-[var(--primary-deep)]">{client.nom}</p>
-                          <p className="text-sm text-[var(--muted)]">{client.telephone}</p>
-                        </div>
-                        <span className="rounded-full bg-[var(--accent)] px-3 py-1 text-sm font-semibold text-[var(--primary-deep)]">
-                          {formatMad(client.total_achats)}
-                        </span>
-                      </button>
-                      <div className="ml-3 flex gap-2">
-                        <button
-                          type="button"
-                          onClick={() => handleEditClient(client)}
-                          className="cursor-pointer rounded-xl border border-[var(--border)] bg-white p-2 text-[var(--primary)] transition hover:bg-[var(--accent)]"
-                          title="Modifier"
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteClient(client.id)}
-                          className="cursor-pointer rounded-xl border border-[var(--border)] bg-white p-2 text-[var(--danger)] transition hover:bg-[#fff0ef]"
-                          title="Supprimer"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
+            <section className="space-y-4">
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setClientsTab("liste")}
+                  className={cn(
+                    "flex flex-1 items-center justify-center gap-1.5 rounded-2xl px-3 py-2 text-xs font-semibold transition-all md:gap-2 md:px-5 md:py-2.5 md:text-sm",
+                    clientsTab === "liste"
+                      ? "bg-[var(--primary)] text-white shadow-md"
+                      : "border border-[var(--border)] bg-white text-[var(--primary-deep)] hover:border-[var(--primary)]/30 hover:bg-[#f5fafa]"
+                  )}
+                >
+                  <Users className="h-3.5 w-3.5 md:h-4 md:w-4" />
+                  Tous les clients
+                </button>
+                <button
+                  onClick={() => { setClientsTab("nouveau"); setClientForm(emptyClient); setEditingClientId("new"); setSelectedClientId(""); }}
+                  className={cn(
+                    "flex flex-1 items-center justify-center gap-1.5 rounded-2xl px-3 py-2 text-xs font-semibold transition-all md:gap-2 md:px-5 md:py-2.5 md:text-sm",
+                    clientsTab === "nouveau"
+                      ? "bg-[var(--primary)] text-white shadow-md"
+                      : "border border-[var(--border)] bg-white text-[var(--primary-deep)] hover:border-[var(--primary)]/30 hover:bg-[#f5fafa]"
+                  )}
+                >
+                  <UserPlus className="h-3.5 w-3.5 md:h-4 md:w-4" />
+                  {editingClientId === "new" ? "Nouveau client" : "Modifier client"}
+                </button>
               </div>
 
-              <div className="glass-card rounded-[30px] p-6">
-                {editingClientId ? (
-                  <>
+              {clientsTab === "liste" && (
+                <>
+                  <div className="glass-card rounded-[30px] p-6">
                     <div className="flex items-center justify-between">
-                      <h2 className="section-title text-xl font-semibold">
-                        {editingClientId === "new" ? "Ajouter un client" : "Modifier le client"}
-                      </h2>
+                      <div className="flex items-center gap-4">
+                        <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-[var(--accent)] to-[var(--primary)] text-white shadow-lg shadow-[var(--primary)]/20 md:h-16 md:w-16">
+                          <Users className="h-6 w-6 md:h-7 md:w-7" />
+                        </div>
+                        <div>
+                          <h2 className="text-xl font-bold tracking-tight text-[var(--primary-deep)] md:text-2xl">Clients</h2>
+                          <p className="mt-1 text-sm text-[var(--muted)]">
+                            {filteredClients.length} client{filteredClients.length !== 1 ? "s" : ""}
+                          </p>
+                        </div>
+                      </div>
                       <button
                         type="button"
-                        onClick={() => { setClientForm(emptyClient); setEditingClientId(null); }}
-                        className="cursor-pointer rounded-2xl border border-[var(--border)] bg-white px-3 py-2 text-sm text-[var(--muted)] transition hover:bg-[#f5f5f5]"
+                        onClick={() => { setClientForm(emptyClient); setEditingClientId("new"); setSelectedClientId(""); setClientsTab("nouveau"); }}
+                        className="cursor-pointer rounded-2xl bg-[var(--primary)] p-3 text-white transition hover:bg-[var(--primary-deep)]"
                       >
-                        <X className="h-4 w-4" />
+                        <UserPlus className="h-4 w-4 md:h-5 md:w-5" />
                       </button>
                     </div>
-                    <div className="mt-5 space-y-3">
-                      <Input label="Nom" value={clientForm.nom} onChange={(value) => setClientForm((current) => ({ ...current, nom: value }))} />
-                      <Input label="Téléphone" value={clientForm.telephone} onChange={(value) => setClientForm((current) => ({ ...current, telephone: value }))} />
-                      <button
-                        type="button"
-                        onClick={handleSaveClient}
-                        className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-2xl bg-[var(--primary)] px-4 py-3 font-semibold text-white transition hover:bg-[var(--primary-deep)]"
-                      >
-                        <Plus className="h-4 w-4" />
-                        {editingClientId === "new" ? "Ajouter le client" : "Mettre à jour le client"}
-                      </button>
+                    <label className="mt-5 flex items-center gap-2 rounded-2xl border border-[var(--border)] bg-white px-4 py-3">
+                      <Search className="h-4 w-4 text-[var(--muted)]" />
+                      <input
+                        value={clientSearch}
+                        onChange={(e) => { setClientSearch(e.target.value); setSelectedClientId(""); }}
+                        placeholder="Rechercher par nom ou téléphone"
+                        className="w-full border-0 bg-transparent outline-none"
+                      />
+                    </label>
+                    <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4">
+                      {filteredClients.map((client) => (
+                        <div
+                          key={client.id}
+                          className={cn(
+                            "group relative cursor-pointer rounded-2xl border-2 px-4 py-4 transition-all hover:-translate-y-0.5 hover:shadow-md",
+                            selectedClientId === client.id
+                              ? "border-[var(--primary)] bg-[#eef6f5] shadow-sm"
+                              : "border-transparent bg-white/75 shadow-sm hover:border-[var(--primary)]/20",
+                          )}
+                          onClick={() => { setSelectedClientId(prev => prev === client.id ? "" : client.id); setEditingClientId(null); }}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="min-w-0 flex-1">
+                              <p className="truncate font-semibold text-[var(--primary-deep)]">{client.nom}</p>
+                              <p className="truncate text-xs text-[var(--muted)]">{client.telephone}</p>
+                            </div>
+                            <span className="shrink-0 rounded-full bg-[var(--accent)] px-2.5 py-0.5 text-xs font-semibold text-[var(--primary-deep)]">
+                              {formatMad(client.total_achats)}
+                            </span>
+                          </div>
+                          <div className="mt-3 flex justify-end gap-1.5 opacity-0 transition group-hover:opacity-100">
+                            <button
+                              type="button"
+                              onClick={(e) => { e.stopPropagation(); handleEditClient(client); setClientsTab("nouveau"); }}
+                              className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-lg border border-[var(--border)] bg-white text-[var(--primary)] transition hover:bg-[var(--accent)]"
+                              title="Modifier"
+                            >
+                              <Pencil className="h-3 w-3" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => { e.stopPropagation(); handleDeleteClient(client.id); }}
+                              className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-lg border border-[var(--border)] bg-white text-[var(--danger)] transition hover:bg-[#fff0ef]"
+                              title="Supprimer"
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
                     </div>
-                  </>
-                ) : selectedClient ? (
-                  <div className="mt-4">
-                    <div className="flex items-center justify-between">
-                      <h2 className="section-title text-xl font-semibold">Historique client</h2>
-                    </div>
-                    <div className="mt-4">
-                      <div
-                        className="rounded-3xl p-5 text-white"
-                        style={{ background: "linear-gradient(135deg, #246f72 0%, #1a4d4f 100%)" }}
-                      >
-                        <p className="text-sm uppercase tracking-[0.2em] text-white/70">Client sélectionné</p>
-                        <h3 className="mt-2 text-2xl font-semibold">{selectedClient.nom}</h3>
-                        <p className="mt-1 text-white/70">{selectedClient.telephone}</p>
-                        <p className="mt-4 text-sm">
-                          Total achats:{" "}
-                          <span className="font-semibold text-[var(--accent)]">
-                            {formatMad(selectedClient.total_achats)}
-                          </span>
-                        </p>
+                  </div>
+
+                  {selectedClient && (
+                    <div className="glass-card rounded-[30px] p-6">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-4">
+                          <div className="flex h-14 w-14 items-center justify-center rounded-2xl text-white" style={{ background: "linear-gradient(135deg, #246f72 0%, #1a4d4f 100%)" }}>
+                            <Users className="h-6 w-6" />
+                          </div>
+                          <div>
+                            <h2 className="text-xl font-bold text-[var(--primary-deep)]">{selectedClient.nom}</h2>
+                            <p className="text-sm text-[var(--muted)]">{selectedClient.telephone}</p>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-xs text-[var(--muted)]">Total achats</p>
+                          <p className="text-lg font-bold text-[var(--primary)]">{formatMad(selectedClient.total_achats)}</p>
+                        </div>
                       </div>
                       <div className="mt-5 space-y-3">
                         {computeClientHistory(selectedClient, data.ventes, data.produits).map((sale) => (
                           <div key={sale.id} className="rounded-3xl border border-[var(--border)] bg-white/75 p-4">
                             <div className="flex items-center justify-between gap-4">
                               <div>
-                                <p className="font-semibold text-[var(--primary-deep)]">
-                                  {sale.produit?.nom ?? "Produit"}
-                                </p>
+                                <p className="font-semibold text-[var(--primary-deep)]">{sale.produit?.nom ?? "Produit"}</p>
                                 <p className="text-sm text-[var(--muted)]">{formatDate(sale.date)}</p>
                               </div>
                               <div className="text-right">
@@ -1408,13 +1472,64 @@ export function AppShell() {
                         ))}
                       </div>
                     </div>
+                  )}
+                </>
+              )}
+
+              {clientsTab === "nouveau" && (
+                <div className="glass-card rounded-[30px] p-6">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-4">
+                      <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-[var(--accent)] to-[var(--primary)] text-white shadow-lg shadow-[var(--primary)]/20 md:h-16 md:w-16">
+                        <UserPlus className="h-6 w-6 md:h-7 md:w-7" />
+                      </div>
+                      <div>
+                        <h2 className="text-xl font-bold tracking-tight text-[var(--primary-deep)] md:text-2xl">
+                          {editingClientId === "new" ? "Nouveau client" : "Modifier le client"}
+                        </h2>
+                        <p className="mt-1 text-sm text-[var(--muted)]">
+                          {editingClientId === "new" ? "Ajoutez un nouveau client à votre base." : "Modifiez les informations du client."}
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => { setClientForm(emptyClient); setEditingClientId(null); setClientsTab("liste"); }}
+                      className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-xl border border-[var(--border)] bg-white transition hover:bg-[#f5f5f5]"
+                    >
+                      <X className="h-4 w-4 text-[var(--muted)]" />
+                    </button>
                   </div>
-                ) : (
-                  <div className="mt-4 rounded-3xl border border-dashed border-[var(--border)] bg-white/55 p-8 text-sm text-[var(--muted)]">
-                    Sélectionnez un client pour afficher son historique d&apos;achats ou ajoutez-en un nouveau.
+                  <div className="mt-5 space-y-3">
+                    <div>
+                      <label className="mb-1.5 block text-xs font-semibold text-[var(--primary-deep)]">Nom</label>
+                      <input
+                        value={clientForm.nom}
+                        onChange={(e) => setClientForm((current) => ({ ...current, nom: e.target.value }))}
+                        placeholder="Entrez le nom du client"
+                        className="w-full rounded-2xl border border-[var(--border)] bg-white px-4 py-3 text-sm outline-none transition focus:border-[var(--primary)]"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-xs font-semibold text-[var(--primary-deep)]">Téléphone</label>
+                      <input
+                        value={clientForm.telephone}
+                        onChange={(e) => setClientForm((current) => ({ ...current, telephone: e.target.value }))}
+                        placeholder="06 XX XX XX XX"
+                        className="w-full rounded-2xl border border-[var(--border)] bg-white px-4 py-3 text-sm outline-none transition focus:border-[var(--primary)]"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleSaveClient}
+                      className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-2xl bg-[var(--primary)] px-4 py-3 font-semibold text-white transition hover:bg-[var(--primary-deep)]"
+                    >
+                      <Plus className="h-4 w-4" />
+                      {editingClientId === "new" ? "Ajouter le client" : "Mettre à jour le client"}
+                    </button>
                   </div>
-                )}
-              </div>
+                </div>
+              )}
             </section>
           )}
 
@@ -1460,10 +1575,12 @@ export function AppShell() {
                     >
                       <div className="flex items-center gap-4">
                         <img
+                          loading="lazy" decoding="async"
                           src={product.image_url}
                           alt={product.nom}
                           width={72}
                           height={72}
+                          onError={(e) => { (e.target as HTMLImageElement).src = "/assets/logo/green_logo.jpeg" }}
                           className="h-18 w-18 shrink-0 rounded-2xl border border-[var(--border)] bg-[#f9fcfb] p-2 object-contain"
                         />
                         <div className="min-w-0 flex-1">
@@ -1489,7 +1606,7 @@ export function AppShell() {
                   <select
                     value={selectedClientId}
                     onChange={(e) => setSelectedClientId(e.target.value)}
-                    className="mt-2 w-full rounded-2xl border border-[var(--border)] bg-white px-4 py-3 outline-none"
+        className="mt-1 w-full rounded-2xl border border-[var(--border)] bg-white px-4 py-2.5 text-sm outline-none sm:mt-2 sm:py-3"
                   >
                     <option value="">Aucun client</option>
                     {data.clients.map((client) => (
@@ -1589,19 +1706,57 @@ export function AppShell() {
 
           {view === "ventes" && (
             <section className="glass-card rounded-[30px] p-6">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <h2 className="section-title text-xl font-semibold">Historique des ventes</h2>
                   <p className="mt-1 text-sm text-[var(--muted)]">
-                    {data.ventes.length} vente{data.ventes.length !== 1 ? "s" : ""} enregistrée{data.ventes.length !== 1 ? "s" : ""}
+                    {filteredVentes.length} vente{filteredVentes.length !== 1 ? "s" : ""} enregistrée{filteredVentes.length !== 1 ? "s" : ""}
                   </p>
                 </div>
-                <div className="rounded-2xl bg-[var(--accent)] px-4 py-2 text-right">
-                  <p className="text-xs uppercase tracking-[0.15em] text-[var(--muted)]">Total général</p>
-                  <p className="text-lg font-bold text-[var(--primary-deep)]">{formatMad(data.ventes.reduce((s, v) => s + v.total, 0))}</p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="group relative">
+                    <select
+                      value={venteClientFilter}
+                      onChange={(e) => setVenteClientFilter(e.target.value)}
+                      className="appearance-none cursor-pointer rounded-2xl border border-[var(--border)] bg-white/80 py-2 pl-3 pr-8 text-xs font-medium text-[var(--primary-deep)] outline-none transition-all focus:border-[var(--primary)] focus:bg-white sm:text-sm"
+                    >
+                      <option value="Tous">Tous les clients</option>
+                      {data.clients.map((client) => (
+                        <option key={client.id} value={client.id}>{client.nom}</option>
+                      ))}
+                    </select>
+                    <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3 w-3 -translate-y-1/2 text-[var(--muted)] sm:h-3.5 sm:w-3.5" />
+                  </div>
+                  <input
+                    type="date"
+                    value={venteDateFilter}
+                    onChange={(e) => setVenteDateFilter(e.target.value)}
+                    className="rounded-2xl border border-[var(--border)] bg-white/80 py-2 px-3 text-xs text-[var(--primary-deep)] outline-none transition-all focus:border-[var(--primary)] focus:bg-white sm:text-sm"
+                  />
+                  {venteDateFilter && (
+                    <button
+                      type="button"
+                      onClick={() => setVenteDateFilter("")}
+                      className="cursor-pointer rounded-2xl border border-[var(--border)] bg-white/80 px-2.5 py-2 text-xs text-[var(--muted)] transition hover:bg-[#f5f5f5] sm:text-sm"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={handleDownloadVentesPDF}
+                    className="flex cursor-pointer items-center gap-1.5 rounded-2xl bg-[var(--primary)] px-3 py-2 text-xs font-semibold text-white transition hover:bg-[var(--primary-deep)] sm:px-4 sm:text-sm"
+                  >
+                    <Upload className="h-3.5 w-3.5" />
+                    PDF
+                  </button>
                 </div>
               </div>
-              <div className="mt-5 overflow-hidden rounded-[26px] border border-[var(--border)]">
+              <div className="mt-4 rounded-2xl bg-[var(--accent)] px-4 py-2 sm:inline-block">
+                <span className="text-xs text-[var(--muted)]">Total filtré: </span>
+                <span className="text-base font-bold text-[var(--primary-deep)]">{formatMad(filteredVentes.reduce((s, v) => s + v.total, 0))}</span>
+              </div>
+              <div className="mt-4 overflow-x-auto rounded-[26px] border border-[var(--border)]">
                 <table className="min-w-full bg-white/80 text-left">
                   <thead className="bg-[#f4f8f7] text-sm text-[var(--muted)]">
                     <tr>
@@ -1613,32 +1768,23 @@ export function AppShell() {
                     </tr>
                   </thead>
                   <tbody>
-                    {data.ventes.length === 0 ? (
+                    {filteredVentes.length === 0 ? (
                       <tr>
                         <td colSpan={5} className="px-4 py-12 text-center text-sm text-[var(--muted)]">
-                          Aucune vente enregistrée pour le moment.
+                          Aucune vente trouvée pour les filtres sélectionnés.
                         </td>
                       </tr>
                     ) : (
-                      data.ventes.map((sale) => {
+                      filteredVentes.map((sale) => {
                         const product = data.produits.find((item) => item.id === sale.produit_id);
                         const client = data.clients.find((item) => item.id === sale.client_id);
-
                         return (
                           <tr key={sale.id} className="border-t border-[var(--border)] transition hover:bg-[#f8fbfa]">
-                            <td className="px-4 py-4 font-medium text-[var(--primary-deep)]">
-                              {product?.nom ?? "Produit"}
-                            </td>
+                            <td className="px-4 py-4 font-medium text-[var(--primary-deep)]">{product?.nom ?? "Produit"}</td>
                             <td className="px-4 py-4">{sale.quantite}</td>
-                            <td className="px-4 py-4">
-                              {client ? `${client.nom} (${client.telephone})` : "Sans client"}
-                            </td>
-                            <td className="px-4 py-4 text-sm text-[var(--muted)]">
-                              {formatDate(sale.date)}
-                            </td>
-                            <td className="px-4 py-4 font-semibold text-[var(--primary)]">
-                              {formatMad(sale.total)}
-                            </td>
+                            <td className="px-4 py-4">{client ? `${client.nom} (${client.telephone})` : "Sans client"}</td>
+                            <td className="px-4 py-4 text-sm text-[var(--muted)]">{formatDate(sale.date)}</td>
+                            <td className="px-4 py-4 font-semibold text-[var(--primary)]">{formatMad(sale.total)}</td>
                           </tr>
                         );
                       })
@@ -1815,7 +1961,7 @@ export function AppShell() {
 
 function FeatureChip({ label }: { label: string }) {
   return (
-    <div className="rounded-2xl border border-white/15 bg-white/10 px-4 py-3 text-sm font-medium text-white">
+    <div className="rounded-2xl border border-white/15 bg-white/10 px-3 py-2 text-xs font-medium text-white sm:px-4 sm:py-3 sm:text-sm">
       {label}
     </div>
   );
@@ -1875,15 +2021,15 @@ function StatCard({ title, value, subtitle }: { title: string; value: string; su
   const Icon = statIcons[title] ?? Package;
   const accent = statAccents[title] ?? "#246f72";
   return (
-    <div className="group cursor-pointer rounded-[28px] bg-white p-5 shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-xl" style={{ borderLeft: "4px solid " + accent }}>
-      <div className="flex items-start justify-between">
-        <div>
-          <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">{title}</p>
-          <p className="mt-3 text-3xl font-semibold" style={{ color: accent }}>{value}</p>
-          <p className="mt-2 text-sm text-[var(--muted)]">{subtitle}</p>
+    <div className="group cursor-pointer rounded-2xl bg-white p-3 shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-xl sm:p-5 sm:rounded-[28px]" style={{ borderLeft: "3px solid " + accent }}>
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--muted)] sm:text-xs">{title}</p>
+          <p className="mt-1 text-xl font-semibold sm:mt-3 sm:text-3xl" style={{ color: accent }}>{value}</p>
+          <p className="mt-0.5 text-[11px] text-[var(--muted)] sm:mt-2 sm:text-sm">{subtitle}</p>
         </div>
-        <div className="flex h-12 w-12 items-center justify-center rounded-2xl opacity-60 transition-all group-hover:scale-110 group-hover:opacity-100" style={{ backgroundColor: accent + "18" }}>
-          <Icon className="h-5 w-5" style={{ color: accent }} />
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl opacity-60 transition-all group-hover:scale-110 group-hover:opacity-100 sm:h-12 sm:w-12 sm:rounded-2xl" style={{ backgroundColor: accent + "18" }}>
+          <Icon className="h-3.5 w-3.5 sm:h-5 sm:w-5" style={{ color: accent }} />
         </div>
       </div>
     </div>
@@ -1902,13 +2048,13 @@ function Input({
   type?: string;
 }) {
   return (
-    <label className="block text-sm font-medium text-[var(--primary-deep)]">
+    <label className="block text-[13px] font-medium text-[var(--primary-deep)] sm:text-sm">
       {label}
       <input
         type={type}
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="mt-2 w-full rounded-2xl border border-[var(--border)] bg-white px-4 py-3 outline-none"
+        className="mt-1 w-full rounded-2xl border border-[var(--border)] bg-white px-4 py-2.5 text-sm outline-none sm:mt-2 sm:py-3"
       />
     </label>
   );

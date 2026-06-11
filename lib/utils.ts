@@ -5,9 +5,9 @@ export function cn(...classes: Array<string | false | null | undefined>) {
 }
 
 export function formatMad(value: number) {
-  return new Intl.NumberFormat("fr-MA", {
+  return new Intl.NumberFormat("fr-FR", {
     style: "currency",
-    currency: "MAD",
+    currency: "EUR",
     maximumFractionDigits: 0,
   }).format(value);
 }

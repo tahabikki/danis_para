@@ -14,8 +14,14 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   return (
     <html lang="fr">
+      <head>
+        {supabaseUrl ? (
+          <link rel="preconnect" href={supabaseUrl} />
+        ) : null}
+      </head>
       <body>{children}</body>
     </html>
   );
